@@ -51,8 +51,13 @@ sequenceDiagram
     C->>FC: 任务组并发调用 filter(message)
     FC-->>C: 全部通过？否则静默丢弃该消息
     C->>H: handle(message)（限 handle_timeout 秒）
-    H-->>C: 返回结果 R
-    C-->>P: yield 结果
+    alt 处理成功
+        H-->>C: 返回结果 R
+        C-->>P: yield 结果
+    else 处理器抛出异常
+        H--x C: 异常（包装为 MessageHandleError）
+        C-->>P: yield MessageHandleFailure 信封（流继续）
+    end
 ```
 
 结合代码的几个关键点：
@@ -61,7 +66,8 @@ sequenceDiagram
 - **过期剔除在消费侧**：取出时才发现过期，直接跳过，不产出、不报错。
 - **过滤链并发且不短路**：链上过滤器在同一任务组内并发启动、全部执行；任何一个拒绝即丢弃。
 - **处理超时局部化**：`handle_timeout` 覆盖单条消息的过滤与处理两段；超时只影响该条消息（被跳过），不中断生成器。
-- **处理异常会传播**：处理器抛出的异常被包装为 `MessageHandleError`，由 `result()` 的迭代方接收。
+- **处理异常转为失败信封**：处理器抛出的异常被包装为 `MessageHandleError`，转为 `MessageHandleFailure` 信封（携带来源消息与错误文本）按序产出——单条消息的失败不终止结果流，消费者以 `isinstance` 区分结果与信封。
+- **过滤器异常汇总上抛**：过滤器抛出的异常由编排器等全部过滤器执行完毕后合并为一个 `ExceptionGroup` 上抛，终止结果流——准入是管道级设施，其失效意味着后续任何消息都无法判定；并发的兄弟异常互不吞没，响亮失败优于带内上报。
 - **过滤器生命周期可上收**：实现 `FilterLifecycle`（`start()`/`aclose()`）的过滤器由 `Bitongue.start()/shutdown()` 统一启动与关闭——如 `SparseFilter` 的建集合与连接管理、`NeuroFilter` 的代理与模型客户端构建，其初始化成本因此落在编排器启动阶段而非首条消息。
 
 ## 并发模型
@@ -69,7 +75,7 @@ sequenceDiagram
 - 全部异步原语来自 anyio，可在 asyncio 与 trio 之上运行；
 - 流窗口是有界内存流：容量满时 `send()` 等待（背压），缓冲为空时 `result()` 等待；
 - `result()` 的底层是单消费者流，同一时刻应由一个任务迭代；
-- 过滤链借助 aioresult 在任务组内并发执行各过滤器，全部完成后汇总裁决；
+- 过滤链借助 aioresult 在任务组内并发执行各过滤器，全部完成后汇总裁决；任一过滤器抛出的异常在汇总时合并为一个 `ExceptionGroup` 原样上抛；
 - `handle_timeout` 用 anyio 取消作用域实现，超时会真正取消过滤与处理内的执行，而不是仅仅放弃等待。
 
 ## 设计取舍

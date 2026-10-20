@@ -88,9 +88,10 @@ async def filter(self, message: T) -> bool:
 - **无模型调用即放行**：无文本载荷、或规则清洗后为空的消息直接放行——这两类
   边界不发起任何模型调用；
 - **模型路径上的失败一律抛出**：响应不符合约定判定结构（`ValueError`）、后端
-  错误、或单次调用超过 `timeout`（`TimeoutError`）都原样传播，过滤器不做
+  错误、或单次调用超过 `timeout`（`TimeoutError`）都原样抛出，过滤器不做
   吞没；交给编排器时，超时由 `handle_timeout` 的既有契约接住（该消息被静默
-  跳过），其余错误向消费者传播；
+  跳过），其余错误属于管道级失败，随过滤链汇总为 `ExceptionGroup` 上抛并
+  终止结果流；
 - **消息间隔离**：每次判定使用独立的对话上下文，判定完成后立即清空——前一条
   消息的文本不会进入后一条的请求；单实例不可并发调用（编排器的单消费者管线
   已保证串行）；
@@ -115,7 +116,7 @@ from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
 模式分词）随 `SparseFilter` 位于 sparse 子包（`bitongue.filter.sparse`），
 使用需安装 `sparse` 可选依赖组。
 
-## 处理器与结果（`BaseHandler` / `BaseResult`）
+## 处理器与结果（`BaseHandler` / `BaseResult` / `MessageHandleFailure`）
 
 `BaseHandler[T, R]` 是业务处理的扩展点，同样是 Protocol，实现一个异步方法：
 
@@ -125,7 +126,7 @@ async def handle(self, message: T) -> R:
 
 `R` 必须是 `BaseResult` 的子类 —— 处理结果与消息一样是 msgspec 结构体，具备序列化能力；基类自带 `id` 字段（与 `BaseMessage.id` 同一约定：由调用方传入的业务侧标识，惯例上镜像来源消息的 `id`），子类声明处理器产出的其余字段。把结果类型作为泛型参数显式声明（`BaseHandler[BaseMessage, UpperResult]`），可以从发送到取结果的整个链路都获得类型检查。
 
-处理器抛出的任何异常会被包装成 `MessageHandleError` 向消费者传播；单条消息在过滤与处理两段的总耗时超过配置的 `handle_timeout`，则该条消息被跳过（不产出结果，也不中断后续消费）。
+失败按故障的作用域分级。处理器抛出的异常是消息级故障：被包装成 `MessageHandleError` 后转为 `MessageHandleFailure` 信封（携带来源消息与错误文本）按序产出，结果流继续消费后续消息——`result()` 的产出类型因此是 `R | MessageHandleFailure`，消费者用 `isinstance` 区分正常结果与失败信封。单条消息在过滤与处理两段的总耗时超过配置的 `handle_timeout`，则该条消息被静默跳过（不产出结果，也不中断后续消费）。过滤器抛出的异常是管道级故障：编排器等全部过滤器执行完毕后，把所有异常汇总为一个 `ExceptionGroup` 上抛并终止结果流——准入机制失效后，后续任何消息都无法判定；并发的兄弟异常互不吞没。
 
 ## 编排器（`Bitongue` / `BitongueConfig`）
 

@@ -110,10 +110,11 @@ rules:
   issues a model call;
 - **Every failure on the model path raises**: a response not matching the
   verdict schema (`ValueError`), a backend error, or a single call exceeding
-  `timeout` (`TimeoutError`) all propagate unchanged — the filter swallows
-  nothing. Under the orchestrator, a timeout is caught by the existing
-  `handle_timeout` contract (that message is skipped silently); every other
-  error reaches the consumer;
+  `timeout` (`TimeoutError`) all raise — the filter swallows nothing. Under
+  the orchestrator, a timeout is caught by the existing `handle_timeout`
+  contract (that message is skipped silently); every other error is a
+  pipeline-scoped failure, combined into the filter chain's `ExceptionGroup`
+  that terminates the result stream;
 - **Isolation between messages**: every verdict runs in a fresh conversation
   context that is cleared as soon as the verdict is read — one message's text
   never enters another's request; a single instance is not safe for
@@ -145,7 +146,7 @@ The supporting tool `Normalizer` (text normalization) is usable on its own;
 subpackage (`bitongue.filter.sparse`) alongside `SparseFilter` and requires
 the optional `sparse` extra.
 
-## Handlers and results (`BaseHandler` / `BaseResult`)
+## Handlers and results (`BaseHandler` / `BaseResult` / `MessageHandleFailure`)
 
 `BaseHandler[T, R]` is the business-logic extension point, also a Protocol, with one async method:
 
@@ -155,7 +156,7 @@ async def handle(self, message: T) -> R:
 
 `R` must be a subclass of `BaseResult` — results are msgspec structs just like messages, with the same serialization abilities; the base class already carries an `id` field (same convention as `BaseMessage.id`: a business-side identifier supplied by the caller, conventionally mirrored from the source message), and the subclass declares the remaining fields the handler yields. Declaring the result type as a generic parameter (`BaseHandler[BaseMessage, UpperResult]`) gives you type checking across the whole path from send to result.
 
-Any exception a handler raises is wrapped into `MessageHandleError` and propagates to the consumer; if the combined time a message spends in filtering and handling exceeds the configured `handle_timeout`, that message is skipped (no result is produced, and consumption continues).
+Failures follow the scope of the fault. An exception a handler raises is a message-scoped failure: it is wrapped into `MessageHandleError` and emitted in order as a `MessageHandleFailure` envelope (carrying the source message and the error text), and the stream keeps consuming later messages — the yield type of `result()` is therefore `R | MessageHandleFailure`, and consumers tell normal results and failure envelopes apart with `isinstance`. If the combined time a message spends in filtering and handling exceeds the configured `handle_timeout`, that message is skipped silently (no result is produced, and consumption continues). An exception a filter raises is a pipeline-scoped failure: the orchestrator waits for every filter to finish, combines all their exceptions into one `ExceptionGroup`, and raises it, terminating the result stream — a broken admission mechanism cannot decide any further message, and concurrent sibling exceptions are never swallowed.
 
 ## The orchestrator (`Bitongue` / `BitongueConfig`)
 
