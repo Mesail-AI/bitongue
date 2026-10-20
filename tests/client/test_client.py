@@ -11,8 +11,8 @@ from tests.client.conftest import (
 )
 from tests.conftest import MakeMessage, WaitUntil
 
-from bitongue.client import MessageHandleError
 from bitongue.flow import BaseMessage
+from bitongue.handler import MessageHandleFailure
 
 
 class TestFilterChain:
@@ -114,6 +114,49 @@ class TestFilterChain:
         await client.shutdown()
         assert [item.content for item in results] == ["m1", "m2"]
 
+    async def test_filter_exceptions_raise_one_group_and_terminate_stream(
+        self,
+        make_client: MakeClient,
+        make_handler: MakeHandler,
+        make_message: MakeMessage,
+    ) -> None:
+        # 准入是管道级设施:filter 异常汇总为异常组上抛并终止流,
+        # 而非转为消息级信封继续流动;并发的兄弟异常互不吞没。
+        class BrokenFilter:
+            """Filter that always raises the given error."""
+
+            def __init__(self, error: Exception) -> None:
+                self._error = error
+                self.seen: list[BaseMessage] = []
+
+            async def filter(self, message: BaseMessage) -> bool:
+                self.seen.append(message)
+                raise self._error
+
+        handler = make_handler()
+        client = make_client(
+            handler=handler,
+            filters=[
+                BrokenFilter(RuntimeError("admission is down")),
+                BrokenFilter(ValueError("verdict backend crashed")),
+            ],
+        )
+        await client.start()
+        await client.send(make_message("m1"))
+        await client.send(make_message("m2"))
+
+        consumed: list[EchoResult | MessageHandleFailure[BaseMessage]] = []
+        with pytest.raises(ExceptionGroup) as excinfo:
+            async for item in client.result():
+                consumed.append(item)  # noqa: PERF401 -- 流应在此处终止
+
+        assert consumed == []  # 流在第一条消息处终止,消息不转为信封继续流动
+        assert {type(exc) for exc in excinfo.value.exceptions} == {
+            RuntimeError,
+            ValueError,
+        }  # 两个并发失败的 filter 异常都被保留
+        await client.shutdown()
+
 
 class TestConcurrentFilters:
     """The filter chain runs its filters concurrently, not one by one."""
@@ -213,6 +256,8 @@ class TestHandleTimeout:
 
                 async def drain() -> None:
                     async for item in client.result():
+                        if isinstance(item, MessageHandleFailure):
+                            continue
                         results.append(item)
                         await anyio.sleep(0.3)  # 每条结果取用耗时 > handle_timeout
 
@@ -225,29 +270,56 @@ class TestHandleTimeout:
 
 
 class TestHandlerError:
-    """特征测试(审计 B3 现状):handler 异常包装为 MessageHandleError 且整个结果流终止。"""
+    """handler 异常转为 MessageHandleFailure 信封按序产出,结果流不终止。"""
 
-    async def test_handler_error_terminates_stream_with_message_handle_error(
+    async def test_handler_error_yields_failure_envelope_and_stream_continues(
         self,
         make_client: MakeClient,
-        make_handler: MakeHandler,
         make_message: MakeMessage,
+        wait_until: WaitUntil,
     ) -> None:
-        handler = make_handler(error=ValueError("boom"))
+        class FailOnceHandler:
+            """Handler that fails the first call and succeeds afterwards."""
+
+            def __init__(self) -> None:
+                self.seen: list[BaseMessage] = []
+
+            async def handle(self, message: BaseMessage) -> EchoResult:
+                self.seen.append(message)
+                if len(self.seen) == 1:
+                    raise ValueError("boom")
+
+                return EchoResult(id=message.id, content=message.text or "")
+
+        handler = FailOnceHandler()
         client = make_client(handler=handler)
         await client.start()
-        await client.send(make_message("m1"))
-        await client.send(make_message("m2"))
+        first = make_message("m1")
+        second = make_message("m2")
+        await client.send(first)
+        await client.send(second)
 
-        consumed: list[EchoResult] = []
-        with pytest.raises(MessageHandleError) as excinfo:
-            async for item in client.result():
-                consumed.append(item)  # noqa: PERF401 -- 流应在此处终止
+        emitted: list[EchoResult | MessageHandleFailure[BaseMessage]] = []
+        with anyio.fail_after(5):
+            async with anyio.create_task_group() as tg:
 
-        assert excinfo.type is MessageHandleError
-        assert isinstance(excinfo.value.__cause__, ValueError)
-        assert consumed == []  # 流在第一条消息处终止,第二条未被处理
+                async def drain() -> None:
+                    async for item in client.result():
+                        emitted.append(item)  # noqa: PERF401 -- 消费须可随时取消
+
+                tg.start_soon(drain)
+                await wait_until(lambda: len(emitted) == 2)
+                tg.cancel_scope.cancel()
+
         await client.shutdown()
+        failure = emitted[0]
+        outcome = emitted[1]
+        assert isinstance(failure, MessageHandleFailure)
+        assert isinstance(outcome, EchoResult)
+        assert failure.message is first  # 信封携带来源消息
+        assert "boom" in failure.error  # 错误文本保留原始异常信息
+        assert outcome.content == "m2"  # 流未终止,第二条消息正常产出
+        assert handler.seen == [first, second]  # 两条消息都进入了 handle
 
 
 class TestClientLifecycle:
@@ -363,7 +435,8 @@ class TestConcurrentConsumers:
         got_first = [await first.__anext__() for _ in range(2)]
         got_second = [await second.__anext__() for _ in range(2)]
 
-        contents = sorted(item.content for item in got_first + got_second)
+        items = [*got_first, *got_second]
+        contents = sorted(item.content for item in items if isinstance(item, EchoResult))
         assert contents == ["a", "b", "c", "d"]
         await first.aclose()
         await second.aclose()

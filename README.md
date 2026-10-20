@@ -118,7 +118,6 @@ async def main() -> None:
         flowing_size=16,       # 流窗口容量（有界缓冲大小）
         flowing_timeout=30,    # 消息在窗口内的存活秒数
         handle_timeout=5.0,    # 单条消息过滤+处理的超时秒数
-        handle_concurrency=1,  # 处理并发（预留字段）
     )
     client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
 
@@ -163,7 +162,9 @@ flowchart LR
   有界缓冲；窗口满时发送方等待，形成背压。
 - **消费侧**：`Bitongue.result()` 按序取出条目，先剔除入库后超过存活时间的过期消息；
   过滤器并发执行，全部通过的消息交给处理器，过滤与处理合计受 `handle_timeout` 约束，
-  超时消息被跳过；处理器异常包装为 `MessageHandleError` 向消费者传播。
+  超时消息被跳过。失败按故障作用域分级：处理器异常包装为 `MessageHandleError` 后转为
+  `MessageHandleFailure` 信封按序产出，流不中断；过滤器异常汇总为 `ExceptionGroup`
+  上抛，终止结果流。
 
 完整结构与一条消息的生命周期见[架构与数据流](https://ahsen17.github.io/bitongue/guide/architecture.html)。
 

@@ -105,7 +105,6 @@ async def main() -> None:
         flowing_size=16,       # flowing window capacity (bounded buffer size)
         flowing_timeout=30,    # seconds a message stays alive in the window
         handle_timeout=5.0,    # per-message filtering+handling timeout in seconds
-        handle_concurrency=1,  # handling concurrency (reserved field)
     )
     client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
 
@@ -148,7 +147,7 @@ flowchart LR
 ```
 
 - **Production side**: `Bitongue.send()` wraps a message into an entry (recording its entry time and lifetime) and puts it into the bounded buffer; when the window is full the sender waits, creating backpressure.
-- **Consumption side**: `Bitongue.result()` draws entries in order and first drops those past their lifetime; filters run concurrently and messages accepted by all of them go to the handler under the combined `handle_timeout` bound covering filtering and handling, while timed-out messages are skipped; handler exceptions are wrapped as `MessageHandleError` and propagate to the consumer.
+- **Consumption side**: `Bitongue.result()` draws entries in order and first drops those past their lifetime; filters run concurrently and messages accepted by all of them go to the handler under the combined `handle_timeout` bound covering filtering and handling, while timed-out messages are skipped. Failures follow the scope of the fault: handler exceptions are wrapped as `MessageHandleError` and emitted in order as `MessageHandleFailure` envelopes without interrupting the stream, while filter exceptions are collected into one `ExceptionGroup` that terminates the stream.
 
 For the full structure and the life of a message, see [Architecture and data flow](https://ahsen17.github.io/bitongue/en/guide/architecture.html).
 

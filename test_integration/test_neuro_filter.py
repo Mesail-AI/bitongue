@@ -69,7 +69,6 @@ class TestRealEndpoint:
             flowing_size=8,
             flowing_timeout=30,
             handle_timeout=60,
-            handle_concurrency=1,
         )
         client = Bitongue(config, handler=ScriptedHandler(), filters=[sut])
         await client.start()

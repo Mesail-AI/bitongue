@@ -88,7 +88,6 @@ async def main() -> None:
         flowing_size=16,       # 流窗口容量（有界缓冲大小）
         flowing_timeout=30,    # 消息在窗口内的存活秒数
         handle_timeout=5.0,    # 单条消息过滤+处理的超时秒数
-        handle_concurrency=1,  # 处理并发（预留字段）
     )
     client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
 

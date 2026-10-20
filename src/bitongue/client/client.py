@@ -5,7 +5,7 @@ import anyio
 from aioresult import ResultCapture
 
 from bitongue.flow import BaseMessage, Flowing
-from bitongue.handler import BaseResult
+from bitongue.handler import BaseResult, MessageHandleFailure
 
 from .exceptions import MessageHandleError
 
@@ -131,9 +131,22 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
                     tg,
                     _filter.filter,
                     message,
+                    suppress_exception=True,
                 )
                 for _filter in self._filters
             )
+
+        # Wait for every filter, then fail loudly: sibling failures are
+        # peers, not a cause chain, so all of them go into one group.
+        failures: list[BaseException] = []
+        for capture in captures:
+            failure = capture.exception()
+
+            if failure is not None:
+                failures.append(failure)
+
+        if failures:
+            raise BaseExceptionGroup("Filter chain failed.", failures)
 
         return not all(capture.result() for capture in captures)
 
@@ -151,17 +164,34 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
                     f"Message handle failed. Error: {exc}",
                 ) from exc
 
-    async def result(self) -> AsyncGenerator["R", None]:
+    async def result(self) -> AsyncGenerator["R | MessageHandleFailure[T]", None]:
         """Yield handling results for messages drawn from the window.
 
         Each message passes, in order: expiry removal, the filter chain —
         filters run concurrently and every one must accept; the chain
         does not short-circuit — and the handler. The configured handle
-        timeout bounds filtering and handling together. A message whose
-        filter rejects it or whose handling times out is skipped
-        silently — no result, no error, later messages unaffected. An
-        exception raised inside the handler is wrapped into
-        :class:`MessageHandleError` and propagates to the consumer.
+        timeout bounds filtering and handling together. Failures are
+        treated by the scope of the fault:
+
+        - A message past its lifetime or rejected by a filter is skipped
+          silently — no result, later messages unaffected.
+        - A handling timeout also skips the message silently: nothing
+          informative happened to report.
+        - An exception raised inside the handler is a message-scoped
+          failure: it is wrapped into :class:`MessageHandleError` and
+          emitted as a :class:`bitongue.handler.MessageHandleFailure`
+          envelope, in order, and the stream keeps consuming later
+          messages.
+        - An exception raised by a filter is a pipeline-scoped failure:
+          every filter in the chain is awaited, all their exceptions are
+          collected into one :class:`ExceptionGroup` and raised, which
+          terminates the stream — a broken admission mechanism cannot
+          decide any further message.
+
+        Normal results are handler-defined ``R`` structures; the failure
+        envelope is the library's own
+        :class:`bitongue.handler.MessageHandleFailure`, so consumers tell
+        the two apart with ``isinstance``.
 
         The underlying stream is single-consumer: only one task may
         iterate this generator at a time.
@@ -169,8 +199,6 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
         Raises:
             RuntimeError: If the client has not been started, or was
                 shut down after starting.
-            MessageHandleError: If the handler raises; the original
-                exception is attached as ``__cause__``.
         """
 
         if self._flow is None or not self._flow.running:
@@ -185,6 +213,9 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
 
             except anyio.get_cancelled_exc_class():
                 raise
+
+            except MessageHandleError as err:
+                yield MessageHandleFailure[T](message=message, error=str(err))
 
             except TimeoutError:
                 continue

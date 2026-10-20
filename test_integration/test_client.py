@@ -5,6 +5,7 @@ import pytest
 
 from test_integration.conftest import (
     CollectResults,
+    EchoResult,
     MakeClient,
     MakeFilter,
     MakeHandler,
@@ -56,6 +57,7 @@ class TestShutdownDuringConsumption:
         await client.send(make_message("only"))
         results = client.result()
         first = await results.__anext__()
+        assert isinstance(first, EchoResult)
         assert first.content == "only"
 
         await client.shutdown()

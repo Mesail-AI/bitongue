@@ -157,7 +157,6 @@ class TestClientAssembly:
             flowing_size=8,
             flowing_timeout=30,
             handle_timeout=30,
-            handle_concurrency=1,
         )
         client = Bitongue(config, handler=ScriptedHandler(), filters=[sut])
         await client.start()  # Init cost lands on client.start, not message 1.
