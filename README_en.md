@@ -105,7 +105,6 @@ async def main() -> None:
         flowing_size=16,       # flowing window capacity (bounded buffer size)
         flowing_timeout=30,    # seconds a message stays alive in the window
         handle_timeout=5.0,    # per-message filtering+handling timeout in seconds
-        handle_concurrency=1,  # handling concurrency (reserved field)
     )
     client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
 

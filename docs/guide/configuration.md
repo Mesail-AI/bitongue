@@ -9,11 +9,10 @@ config = BitongueConfig(
     flowing_size=16,
     flowing_timeout=30,
     handle_timeout=5.0,
-    handle_concurrency=1,
 )
 ```
 
-`BitongueConfig` 本身是 msgspec 结构体（继承 `BaseStruct`），四个字段均为必填。
+`BitongueConfig` 本身是 msgspec 结构体（继承 `BaseStruct`），三个字段均为必填。
 
 ## 字段一览
 
@@ -22,7 +21,6 @@ config = BitongueConfig(
 | `flowing_size` | `int` | 条 | 流窗口的有界缓冲容量；窗口满时 `send()` 等待，形成背压 |
 | `flowing_timeout` | `int \| None` | 秒 | 消息在窗口内的存活时间；消费时剔除入库后超时的条目；`None` 表示永不过期 |
 | `handle_timeout` | `float` | 秒 | 单条消息过滤与处理两段合计允许的最大耗时；超时消息被跳过（不产出结果，不中断消费） |
-| `handle_concurrency` | `int` | — | 处理并发配置；**当前版本该字段已定义但尚未参与调度逻辑，属预留字段**，写入任意值不改变行为 |
 
 ## 各字段的行为细节
 
@@ -43,9 +41,7 @@ config = BitongueConfig(
 
 超时窗口覆盖单条消息的**过滤与处理两段**（过滤器链的总耗时计入预算）。以 anyio 取消作用域实现：超时会**真正取消**过滤或处理内的执行（而不仅是放弃等待），随后该消息被跳过，消费继续下一条。处理器内部的清理逻辑（`try/finally`、`async with` 等）会正常执行。
 
-### `handle_concurrency`
-
-预留字段，见上表说明；后续版本引入并发处理调度时，语义将在此页更新。
+消息逐条**串行**处理：`result()` 的底层是单消费者内存流，配置不提供并发处理选项；需要更高吞吐时，按业务分片运行多个编排器实例。
 
 ## 生命周期约束
 
@@ -61,7 +57,6 @@ config = BitongueConfig(
     flowing_size=64,      # 允许突发 64 条排队
     flowing_timeout=10,   # 排队超过 10 秒的消息到期作废
     handle_timeout=2.0,   # 单条处理最多 2 秒，超时跳过
-    handle_concurrency=1,
 )
 ```
 
