@@ -70,7 +70,6 @@ def _build_client(
         flowing_size=flowing_size,
         flowing_timeout=flowing_timeout,
         handle_timeout=handle_timeout,
-        handle_concurrency=1,
     )
     return Bitongue(
         config,

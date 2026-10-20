@@ -136,7 +136,6 @@ class TestLifecycle:
             flowing_size=8,
             flowing_timeout=30,
             handle_timeout=30,
-            handle_concurrency=1,
         )
         client = Bitongue(config, handler=_EchoHandler(), filters=[sut])
         await client.start()

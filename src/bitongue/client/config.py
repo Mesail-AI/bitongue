@@ -10,4 +10,3 @@ class BitongueConfig(BaseStruct):
     flowing_timeout: int | None
 
     handle_timeout: float
-    handle_concurrency: int
