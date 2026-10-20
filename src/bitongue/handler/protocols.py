@@ -21,8 +21,9 @@ class BaseHandler[T: BaseMessage, R: BaseResult](Protocol):
     The orchestrator bounds each call by the configured handle timeout and
     cancels the work when it runs out, skipping the message without
     blocking later ones. Any exception raised here is wrapped into
-    :class:`bitongue.client.MessageHandleError` and propagates to the
-    consumer of the results.
+    :class:`bitongue.client.MessageHandleError` and emitted to the
+    consumer as a :class:`bitongue.handler.MessageHandleFailure` envelope
+    — a single message's failure never terminates the result stream.
 
     Returns:
         The handling result, an ``R`` instance to yield to the consumer.

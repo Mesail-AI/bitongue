@@ -9,7 +9,7 @@ import pytest
 from bitongue.client import Bitongue, BitongueConfig
 from bitongue.filter import BaseFilter
 from bitongue.flow import BaseMessage
-from bitongue.handler import BaseHandler, BaseResult
+from bitongue.handler import BaseHandler, BaseResult, MessageHandleFailure
 
 type MakeMessage = Callable[..., BaseMessage]
 type MakeClient = Callable[..., Bitongue[BaseMessage, EchoResult]]
@@ -86,7 +86,11 @@ async def _collect_results(
     *,
     count: int,
 ) -> list[EchoResult]:
-    """Consume exactly ``count`` results from the client, then stop (5 s guard)."""
+    """Consume exactly ``count`` handled results, then stop (5 s guard).
+
+    Failure envelopes are not handled results and are skipped; a stream
+    that only yields envelopes stalls into the guard timeout.
+    """
     results: list[EchoResult] = []
     with anyio.fail_after(5):
         async with anyio.create_task_group() as tg:
@@ -94,7 +98,9 @@ async def _collect_results(
             async def drain() -> None:
                 # 逐条 append 而非 extend: 部分结果需即时可见, 供外层轮询提前终止
                 async for item in client.result():
-                    results.append(item)  # noqa: PERF401
+                    if isinstance(item, MessageHandleFailure):
+                        continue
+                    results.append(item)
 
             tg.start_soon(drain)
             while len(results) < count:
