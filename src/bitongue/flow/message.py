@@ -10,23 +10,40 @@ from bitongue.base import BaseStruct
 __all__ = (
     "BaseMessage",
     "MessageEntry",
+    "TextualMessage",
 )
 
 
 class BaseMessage(BaseStruct):
     """Base message delivered through the flowing window.
 
+    The minimal message envelope: a caller-supplied identity without a
+    payload contract. Concrete message types subclass it to add their
+    payload fields.
+
     Attributes:
         id: Caller-supplied unique identifier; bitongue never generates
             one — carry over the business-side ID the message came with.
-        type: Message kind; currently fixed to ``"text"``.
-        text: The message content; ``None`` means the message carries no
-            text payload.
     """
 
     id: UUID
-    type: Literal["text"]
-    text: str | None = field(default=None)
+
+
+class TextualMessage(BaseMessage):
+    """A message whose payload is text.
+
+    The default concrete message: ``type`` tags the payload kind and
+    ``text`` carries the content. Built-in filters treat a message
+    without a text payload as payloadless and release it.
+
+    Attributes:
+        type: Payload kind tag; fixed to ``"text"``.
+        text: The text payload; ``None`` means the message carries no
+            text payload.
+    """
+
+    type: Literal["text"] = "text"
+    text: str | None = None
 
 
 class MessageEntry[T: BaseMessage](BaseStruct):
