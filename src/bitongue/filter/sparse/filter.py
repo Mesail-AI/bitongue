@@ -10,12 +10,12 @@ from qdrant_client.http import models as qdrant_models
 from uuid_utils.compat import uuid5
 
 from bitongue.filter.protocols import BaseFilter, FilterLifecycle
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 
 from .bm25 import Bm25, Bm25CN
 from .policy import Bm25Policy, QdrantPolicy
 
-__all__ = ("SparseFilter",)
+__all__ = ("SparseTextualFilter",)
 
 
 POINT_NAMESPACE: Final[UUID] = UUID("8326bf65-7163-4452-a591-c8dc45cd7670")
@@ -23,7 +23,7 @@ POINT_NAMESPACE: Final[UUID] = UUID("8326bf65-7163-4452-a591-c8dc45cd7670")
 SPARSE_VECTOR_NAME: Final[str] = "sparse"
 
 
-class SparseFilter[T: BaseMessage](BaseFilter, FilterLifecycle):
+class SparseTextualFilter[T: TextualMessage](BaseFilter, FilterLifecycle):
     """Reject messages that duplicate one of the reference documents.
 
     The reference corpus is embedded with BM25 into a qdrant sparse

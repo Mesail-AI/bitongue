@@ -8,7 +8,7 @@ from autogen_core.models import SystemMessage, UserMessage
 from pydantic import BaseModel
 
 from bitongue.filter.protocols import BaseFilter, FilterLifecycle
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 
 from .provider import OpenAIClientProvider
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from .policy import NeuroFilterPolicy
 
 
-__all__ = ("NeuroFilter",)
+__all__ = ("NeuroTextualFilter",)
 
 
 class _NeuroFilterResult(BaseModel):
@@ -28,7 +28,7 @@ class _NeuroFilterResult(BaseModel):
     filtered: bool
 
 
-class NeuroFilter[T: BaseMessage](BaseFilter, FilterLifecycle):
+class NeuroTextualFilter[T: TextualMessage](BaseFilter, FilterLifecycle):
     """Reject messages whose text violates caller-supplied rules, judged by a model.
 
     Every candidate is handed to an autogen ``AssistantAgent`` backed by
@@ -152,7 +152,7 @@ class NeuroFilter[T: BaseMessage](BaseFilter, FilterLifecycle):
         """
 
         if not self._running:
-            raise RuntimeError("NeuroFilter is not running.")
+            raise RuntimeError("NeuroTextualFilter is not running.")
 
         if message.type != "text" or not message.text:
             # Skip non-text messages

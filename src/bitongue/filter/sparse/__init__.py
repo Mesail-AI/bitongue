@@ -1,5 +1,5 @@
 from .bm25 import Bm25, Bm25CN
-from .filter import SparseFilter
+from .filter import SparseTextualFilter
 from .policy import Bm25Policy, QdrantPolicy
 from .stemmer import Stemmer
 from .tokenizer import JiebaTokenizer
@@ -10,6 +10,6 @@ __all__ = (
     "Bm25Policy",
     "JiebaTokenizer",
     "QdrantPolicy",
-    "SparseFilter",
+    "SparseTextualFilter",
     "Stemmer",
 )

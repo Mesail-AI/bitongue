@@ -4,7 +4,7 @@ __all__ = ("OpenAIClientProvider",)
 
 
 class OpenAIClientProvider:
-    """Build the OpenAI-compatible model client used by NeuroFilter.
+    """Build the OpenAI-compatible model client used by NeuroTextualFilter.
 
     The customization point for endpoints and backend quirks: each
     :meth:`provide` call builds a fresh ``OpenAIChatCompletionClient``

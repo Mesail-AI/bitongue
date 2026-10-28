@@ -15,7 +15,7 @@ class Bm25Policy(BaseStruct):
     """Runtime configuration for BM25 sparse embedding.
 
     These are runtime-only knobs: a policy is consumed when a
-    :class:`SparseFilter` builds its embedding and is never
+    :class:`SparseTextualFilter` builds its embedding and is never
     serialized — fields holding objects or paths (``stemmer``,
     ``stopwords``, ``stopwords_filepath``) sit outside the
     ``BaseStruct`` JSON contract, so ``to_json``/``from_json`` are not

@@ -4,7 +4,7 @@ __all__ = ("NeuroFilterPolicy",)
 
 
 class NeuroFilterPolicy(BaseStruct):
-    """Connection and rule configuration for :class:`NeuroFilter`.
+    """Connection and rule configuration for :class:`NeuroTextualFilter`.
 
     Attributes:
         base_url: Base URL of an OpenAI-compatible chat endpoint.
