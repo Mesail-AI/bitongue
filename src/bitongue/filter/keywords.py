@@ -3,7 +3,7 @@ from typing import Self
 
 from ahocorasick import Automaton
 
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 
 from .protocols import BaseFilter
 from .utils import Normalizer
@@ -11,7 +11,7 @@ from .utils import Normalizer
 __all__ = ("KeywordsFilter",)
 
 
-class KeywordsFilter[T: BaseMessage](BaseFilter):
+class KeywordsFilter[T: TextualMessage](BaseFilter):
     """Reject messages whose text contains any of the known keywords.
 
     Matching runs on normalized text: keywords and message text are both
@@ -53,7 +53,7 @@ class KeywordsFilter[T: BaseMessage](BaseFilter):
         self._automaton = automaton
 
     @classmethod
-    def load_from_file(cls, filepath: Path | str) -> Self:
+    def load_from_file(cls, filepath: "Path | str") -> Self:
 
         if isinstance(filepath, str):
             filepath = Path(filepath)

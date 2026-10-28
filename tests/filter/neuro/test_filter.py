@@ -10,11 +10,11 @@ from autogen_core.models import CreateResult, LLMMessage
 from autogen_ext.models.replay import ReplayChatCompletionClient
 from pytest_mock import MockerFixture
 from tests.conftest import MakeMessage
-from tests.filter.neuro.conftest import MakeNeuroFilter
+from tests.filter.neuro.conftest import MakeNeuroTextualFilter
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
-from bitongue.flow import BaseMessage
+from bitongue.filter.neuro import NeuroFilterPolicy, NeuroTextualFilter
+from bitongue.flow import TextualMessage
 from bitongue.handler import BaseHandler, BaseResult
 
 _REJECT = '{"filtered": true}'
@@ -25,8 +25,8 @@ class _EchoResult(BaseResult):
     content: str
 
 
-class _EchoHandler(BaseHandler[BaseMessage, _EchoResult]):
-    async def handle(self, message: BaseMessage) -> _EchoResult:
+class _EchoHandler(BaseHandler[TextualMessage, _EchoResult]):
+    async def handle(self, message: TextualMessage) -> _EchoResult:
         return _EchoResult(id=message.id, content=message.text or "")
 
 
@@ -35,7 +35,7 @@ class TestConstruction:
 
     async def test_construction_is_lazy(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
     ) -> None:
         sut, replay = make_neuro_filter([_RELEASE])
         assert sut.running is False
@@ -48,7 +48,7 @@ class TestLifecycle:
 
     async def test_filter_before_start_raises(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         make_message: MakeMessage,
     ) -> None:
         sut, _ = make_neuro_filter([_RELEASE])
@@ -57,7 +57,7 @@ class TestLifecycle:
 
     async def test_filter_after_aclose_raises(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         make_message: MakeMessage,
     ) -> None:
         sut, _ = make_neuro_filter([_RELEASE])
@@ -68,7 +68,7 @@ class TestLifecycle:
 
     async def test_aclose_without_start_is_a_noop(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
     ) -> None:
         sut, replay = make_neuro_filter([_RELEASE])
         await sut.aclose()
@@ -77,7 +77,7 @@ class TestLifecycle:
 
     async def test_start_idempotent_closes_once(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         mocker: MockerFixture,
     ) -> None:
         sut, replay = make_neuro_filter([_RELEASE])
@@ -112,7 +112,7 @@ class TestLifecycle:
             "bitongue.filter.neuro.filter.OpenAIClientProvider",
             _CountingProvider,
         )
-        sut: NeuroFilter[BaseMessage] = NeuroFilter(
+        sut: NeuroTextualFilter[TextualMessage] = NeuroTextualFilter(
             NeuroFilterPolicy(
                 base_url="https://unit.test/v1",
                 api_key="unit-key",
@@ -132,7 +132,7 @@ class TestLifecycle:
 
     async def test_client_orchestration_starts_and_closes(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
     ) -> None:
         sut, _ = make_neuro_filter([_RELEASE])
         config = BitongueConfig(
@@ -154,7 +154,7 @@ class TestVerdict:
 
     async def test_filtered_verdict_rejected(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         make_message: MakeMessage,
     ) -> None:
         sut, _ = make_neuro_filter([_REJECT])
@@ -163,7 +163,7 @@ class TestVerdict:
 
     async def test_released_verdict_released(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         make_message: MakeMessage,
     ) -> None:
         sut, _ = make_neuro_filter([_RELEASE])
@@ -173,12 +173,12 @@ class TestVerdict:
     @pytest.mark.parametrize("text", [None, ""], ids=["none", "empty"])
     async def test_payloadless_message_released_without_model_call(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         text: str | None,
     ) -> None:
         sut, replay = make_neuro_filter([_REJECT])
         await sut.start()
-        assert await sut.filter(BaseMessage(id=uuid4(), type="text", text=text)) is True
+        assert await sut.filter(TextualMessage(id=uuid4(), text=text)) is True
         assert replay.create_calls == []
 
     @pytest.mark.parametrize(
@@ -188,7 +188,7 @@ class TestVerdict:
     )
     async def test_empty_rules_release_without_model_call(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         rules: str | list[str],
         make_message: MakeMessage,
     ) -> None:
@@ -199,7 +199,7 @@ class TestVerdict:
 
     async def test_string_rules_used_verbatim(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         make_message: MakeMessage,
     ) -> None:
         # Regression: a str rules value must reach the model as-is, not
@@ -213,7 +213,7 @@ class TestVerdict:
 
     async def test_list_rules_joined_with_newlines(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         make_message: MakeMessage,
     ) -> None:
         sut, replay = make_neuro_filter(
@@ -227,7 +227,7 @@ class TestVerdict:
 
     async def test_message_text_reaches_model(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         make_message: MakeMessage,
     ) -> None:
         sut, replay = make_neuro_filter([_RELEASE])
@@ -238,7 +238,7 @@ class TestVerdict:
 
     async def test_exchanges_are_isolated(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         make_message: MakeMessage,
     ) -> None:
         # Regression: the conversation buffer is cleared after every verdict
@@ -259,7 +259,7 @@ class TestFailure:
 
     async def test_unparseable_verdict_propagates(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         make_message: MakeMessage,
     ) -> None:
         # The model must answer with the agreed JSON shape; anything else is
@@ -271,7 +271,7 @@ class TestFailure:
 
     async def test_backend_error_propagates(
         self,
-        make_neuro_filter: MakeNeuroFilter,
+        make_neuro_filter: MakeNeuroTextualFilter,
         make_message: MakeMessage,
     ) -> None:
         # An empty replay queue makes the client raise on call, standing in
@@ -310,7 +310,7 @@ class TestFailure:
             "bitongue.filter.neuro.filter.OpenAIClientProvider",
             _StubProvider,
         )
-        sut: NeuroFilter[BaseMessage] = NeuroFilter(
+        sut: NeuroTextualFilter[TextualMessage] = NeuroTextualFilter(
             NeuroFilterPolicy(
                 base_url="https://unit.test/v1",
                 api_key="unit-key",

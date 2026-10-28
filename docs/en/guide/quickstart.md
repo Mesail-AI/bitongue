@@ -27,7 +27,7 @@ If the package is not yet published to PyPI, install it from source:
 uv add git+https://github.com/Ahsen17/bitongue.git
 ```
 
-The built-in `SparseFilter` depends on fastembed, jieba, and qdrant-client,
+The built-in `SparseTextualFilter` depends on fastembed, jieba, and qdrant-client,
 published as the optional `sparse` extra; install it if you need that filter
 (pip users write `pip install "bitongue[sparse]"`):
 
@@ -35,7 +35,7 @@ published as the optional `sparse` extra; install it if you need that filter
 uv add "bitongue[sparse]"
 ```
 
-The built-in `NeuroFilter` depends on the autogen packages, published as the
+The built-in `NeuroTextualFilter` depends on the autogen packages, published as the
 optional `neuro` extra; install it if you need that filter (pip users write
 `pip install "bitongue[neuro]"`):
 
@@ -61,7 +61,7 @@ import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
 from bitongue.filter import BaseFilter
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 from bitongue.handler import BaseHandler, BaseResult
 
 
@@ -71,17 +71,17 @@ class UpperResult(BaseResult):
     text: str
 
 
-class NonEmptyFilter(BaseFilter[BaseMessage]):
+class NonEmptyFilter(BaseFilter[TextualMessage]):
     """A filter that drops messages with empty text."""
 
-    async def filter(self, message: BaseMessage) -> bool:
+    async def filter(self, message: TextualMessage) -> bool:
         return bool(message.text)
 
 
-class UpperHandler(BaseHandler[BaseMessage, UpperResult]):
+class UpperHandler(BaseHandler[TextualMessage, UpperResult]):
     """A handler that uppercases the text."""
 
-    async def handle(self, message: BaseMessage) -> UpperResult:
+    async def handle(self, message: TextualMessage) -> UpperResult:
         return UpperResult(id=message.id, text=(message.text or "").upper())
 
 
@@ -96,8 +96,8 @@ async def main() -> None:
     await client.start()
     # The id is generated on the business side and passed through; real
     # applications typically reuse an identifier they already have.
-    await client.send(BaseMessage(id=uuid4(), type="text", text="hello bitongue"))
-    await client.send(BaseMessage(id=uuid4(), type="text", text=""))  # dropped by the filter
+    await client.send(TextualMessage(id=uuid4(), text="hello bitongue"))
+    await client.send(TextualMessage(id=uuid4(), text=""))  # dropped by the filter
 
     async for result in client.result():
         print(result.text)  # HELLO BITONGUE
@@ -145,17 +145,17 @@ client = Bitongue(
 )
 ```
 
-The other built-in filter, `SparseFilter`, intercepts near-duplicates via
+The other built-in filter, `SparseTextualFilter`, intercepts near-duplicates via
 qdrant sparse retrieval: given a reference corpus, messages similar to it are
 rejected while unrelated ones pass — a good fit for duplicate-content
 admission. It requires the optional `sparse` extra (see the installation
 section above) and is imported from the sparse subpackage:
 
 ```python
-from bitongue.filter.sparse import SparseFilter
+from bitongue.filter.sparse import SparseTextualFilter
 ```
 
-The third built-in filter, `NeuroFilter`, hands natural-language rules and
+The third built-in filter, `NeuroTextualFilter`, hands natural-language rules and
 the message text to a large language model for judgment — a good fit for
 semantic admission that keywords cannot enumerate (for example, "reject
 abusive content"). It requires the optional `neuro` extra (see the
@@ -164,9 +164,9 @@ be started first — handing it to an orchestrator covers this through
 `client.start()`:
 
 ```python
-from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+from bitongue.filter.neuro import NeuroTextualFilter, NeuroFilterPolicy
 
-neuro = NeuroFilter(
+neuro = NeuroTextualFilter(
     NeuroFilterPolicy(
         base_url="https://api.example.com/v1",
         api_key="<your-api-key>",

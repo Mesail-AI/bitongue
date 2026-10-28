@@ -11,7 +11,7 @@ from tests.client.conftest import (
 )
 from tests.conftest import MakeMessage, WaitUntil
 
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 from bitongue.handler import MessageHandleFailure
 
 
@@ -127,9 +127,9 @@ class TestFilterChain:
 
             def __init__(self, error: Exception) -> None:
                 self._error = error
-                self.seen: list[BaseMessage] = []
+                self.seen: list[TextualMessage] = []
 
-            async def filter(self, message: BaseMessage) -> bool:
+            async def filter(self, message: TextualMessage) -> bool:
                 self.seen.append(message)
                 raise self._error
 
@@ -145,7 +145,7 @@ class TestFilterChain:
         await client.send(make_message("m1"))
         await client.send(make_message("m2"))
 
-        consumed: list[EchoResult | MessageHandleFailure[BaseMessage]] = []
+        consumed: list[EchoResult | MessageHandleFailure[TextualMessage]] = []
         with pytest.raises(ExceptionGroup) as excinfo:
             async for item in client.result():
                 consumed.append(item)  # noqa: PERF401 -- 流应在此处终止
@@ -177,9 +177,9 @@ class TestConcurrentFilters:
             """Filter that waits until its companion has started."""
 
             def __init__(self) -> None:
-                self.seen: list[BaseMessage] = []
+                self.seen: list[TextualMessage] = []
 
-            async def filter(self, message: BaseMessage) -> bool:
+            async def filter(self, message: TextualMessage) -> bool:
                 self.seen.append(message)
                 with anyio.fail_after(2):
                     await release_first.wait()
@@ -190,9 +190,9 @@ class TestConcurrentFilters:
             """Companion filter that unblocks the waiting one."""
 
             def __init__(self) -> None:
-                self.seen: list[BaseMessage] = []
+                self.seen: list[TextualMessage] = []
 
-            async def filter(self, message: BaseMessage) -> bool:
+            async def filter(self, message: TextualMessage) -> bool:
                 self.seen.append(message)
                 release_first.set()
 
@@ -282,9 +282,9 @@ class TestHandlerError:
             """Handler that fails the first call and succeeds afterwards."""
 
             def __init__(self) -> None:
-                self.seen: list[BaseMessage] = []
+                self.seen: list[TextualMessage] = []
 
-            async def handle(self, message: BaseMessage) -> EchoResult:
+            async def handle(self, message: TextualMessage) -> EchoResult:
                 self.seen.append(message)
                 if len(self.seen) == 1:
                     raise ValueError("boom")
@@ -299,7 +299,7 @@ class TestHandlerError:
         await client.send(first)
         await client.send(second)
 
-        emitted: list[EchoResult | MessageHandleFailure[BaseMessage]] = []
+        emitted: list[EchoResult | MessageHandleFailure[TextualMessage]] = []
         with anyio.fail_after(5):
             async with anyio.create_task_group() as tg:
 

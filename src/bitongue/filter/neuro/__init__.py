@@ -1,9 +1,9 @@
-from .filter import NeuroFilter
+from .filter import NeuroTextualFilter
 from .policy import NeuroFilterPolicy
 from .provider import OpenAIClientProvider
 
 __all__ = (
-    "NeuroFilter",
     "NeuroFilterPolicy",
+    "NeuroTextualFilter",
     "OpenAIClientProvider",
 )

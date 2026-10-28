@@ -6,12 +6,12 @@ import pytest
 from autogen_core.models import CreateResult, ModelFamily, ModelInfo
 from autogen_ext.models.replay import ReplayChatCompletionClient
 
-from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
-from bitongue.flow import BaseMessage
+from bitongue.filter.neuro import NeuroFilterPolicy, NeuroTextualFilter
+from bitongue.flow import TextualMessage
 
-type MakeNeuroFilter = Callable[
+type MakeNeuroTextualFilter = Callable[
     ...,
-    tuple[NeuroFilter[BaseMessage], ReplayChatCompletionClient],
+    tuple[NeuroTextualFilter[TextualMessage], ReplayChatCompletionClient],
 ]
 
 # Mirror the capability claims the real provider hands to autogen, so the
@@ -26,17 +26,17 @@ _REPLAY_MODEL_INFO: ModelInfo = {
 
 
 @pytest.fixture
-def make_neuro_filter(monkeypatch: pytest.MonkeyPatch) -> MakeNeuroFilter:
-    """Factory fixture: a NeuroFilter whose model client replays canned
-    responses. The provider construction is patched at its lookup site;
-    monkeypatch restores it after the test."""
+def make_neuro_filter(monkeypatch: pytest.MonkeyPatch) -> MakeNeuroTextualFilter:
+    """Factory fixture: a NeuroTextualFilter whose model client replays
+    canned responses. The provider construction is patched at its lookup
+    site; monkeypatch restores it after the test."""
 
     def _make(
         responses: Sequence[str | CreateResult],
         *,
         rules: str | list[str] = "no spam",
         timeout: float = 5.0,
-    ) -> tuple[NeuroFilter[BaseMessage], ReplayChatCompletionClient]:
+    ) -> tuple[NeuroTextualFilter[TextualMessage], ReplayChatCompletionClient]:
         replay = ReplayChatCompletionClient(
             list(responses),
             model_info=_REPLAY_MODEL_INFO,
@@ -61,6 +61,6 @@ def make_neuro_filter(monkeypatch: pytest.MonkeyPatch) -> MakeNeuroFilter:
             rules=rules,
             timeout=timeout,
         )
-        return NeuroFilter(policy), replay
+        return NeuroTextualFilter(policy), replay
 
     return _make

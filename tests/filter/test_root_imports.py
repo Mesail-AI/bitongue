@@ -32,7 +32,7 @@ SCRIPT = dedent(
     assert Normalizer is not None
 
     try:
-        from bitongue.filter.sparse import SparseFilter  # noqa: F401
+        from bitongue.filter.sparse import SparseTextualFilter  # noqa: F401
     except ModuleNotFoundError as exc:
         assert exc.name in {BLOCKED!r}
     else:

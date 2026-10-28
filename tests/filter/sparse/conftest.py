@@ -5,10 +5,10 @@ from uuid import uuid4
 
 import pytest
 
-from bitongue.filter.sparse import QdrantPolicy, SparseFilter
-from bitongue.flow import BaseMessage
+from bitongue.filter.sparse import QdrantPolicy, SparseTextualFilter
+from bitongue.flow import TextualMessage
 
-type MakeSparseFilter = Callable[..., SparseFilter[BaseMessage]]
+type MakeSparseTextualFilter = Callable[..., SparseTextualFilter[TextualMessage]]
 
 
 @pytest.fixture
@@ -20,18 +20,19 @@ def in_memory_policy() -> QdrantPolicy:
 @pytest.fixture
 async def make_sparse_filter(
     in_memory_policy: QdrantPolicy,
-) -> AsyncIterator[MakeSparseFilter]:
-    """Factory fixture: an in-memory SparseFilter per call; teardown closes all."""
+) -> AsyncIterator[MakeSparseTextualFilter]:
+    """Factory fixture: an in-memory SparseTextualFilter per call; teardown
+    closes all."""
 
-    created: list[SparseFilter[BaseMessage]] = []
+    created: list[SparseTextualFilter[TextualMessage]] = []
 
     def _make(
         documents: list[str],
         *,
         filter_threshold: float = 0.8,
         normalize_scale: float = 5.0,
-    ) -> SparseFilter[BaseMessage]:
-        sut: SparseFilter[BaseMessage] = SparseFilter(
+    ) -> SparseTextualFilter[TextualMessage]:
+        sut: SparseTextualFilter[TextualMessage] = SparseTextualFilter(
             f"unit_{uuid4().hex}",
             documents,
             qdrant_policy=in_memory_policy,

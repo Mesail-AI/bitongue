@@ -9,9 +9,9 @@ from uuid import uuid4
 import anyio
 import pytest
 
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 
-type MakeMessage = Callable[..., BaseMessage]
+type MakeMessage = Callable[..., TextualMessage]
 type WaitUntil = Callable[[Callable[[], bool]], Awaitable[None]]
 
 
@@ -19,8 +19,8 @@ type WaitUntil = Callable[[Callable[[], bool]], Awaitable[None]]
 def make_message() -> MakeMessage:
     """Factory fixture for minimal text messages."""
 
-    def _make(text: str = "hello") -> BaseMessage:
-        return BaseMessage(id=uuid4(), type="text", text=text)
+    def _make(text: str = "hello") -> TextualMessage:
+        return TextualMessage(id=uuid4(), text=text)
 
     return _make
 

@@ -6,7 +6,7 @@ from tests.conftest import MakeMessage
 from tests.filter.conftest import MakeKeywordFile
 
 from bitongue.filter import KeywordsFilter
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 
 
 class TestVerdict:
@@ -14,29 +14,29 @@ class TestVerdict:
     text, or an empty keyword list releases."""
 
     async def test_hit_rejects(self, make_message: MakeMessage) -> None:
-        sut: KeywordsFilter[BaseMessage] = KeywordsFilter(["违禁词"])
+        sut: KeywordsFilter[TextualMessage] = KeywordsFilter(["违禁词"])
         assert await sut.filter(make_message("正文包含违禁词内容")) is False
 
     async def test_miss_releases(self, make_message: MakeMessage) -> None:
-        sut: KeywordsFilter[BaseMessage] = KeywordsFilter(["违禁词"])
+        sut: KeywordsFilter[TextualMessage] = KeywordsFilter(["违禁词"])
         assert await sut.filter(make_message("完全无关的内容")) is True
 
     async def test_substring_hit_rejects(self, make_message: MakeMessage) -> None:
         # Aho-Corasick matches substrings: the keyword firing as a text
         # fragment counts as a hit.
-        sut: KeywordsFilter[BaseMessage] = KeywordsFilter(["违规"])
+        sut: KeywordsFilter[TextualMessage] = KeywordsFilter(["违规"])
         assert await sut.filter(make_message("前缀违规后缀")) is False
 
     async def test_empty_text_releases(self) -> None:
-        sut: KeywordsFilter[BaseMessage] = KeywordsFilter(["违禁词"])
-        assert await sut.filter(BaseMessage(id=uuid4(), type="text", text=None)) is True
+        sut: KeywordsFilter[TextualMessage] = KeywordsFilter(["违禁词"])
+        assert await sut.filter(TextualMessage(id=uuid4())) is True
 
     async def test_empty_keyword_list_releases_all(
         self,
         make_message: MakeMessage,
     ) -> None:
         # An empty keyword list has nothing to intercept; all is released.
-        sut: KeywordsFilter[BaseMessage] = KeywordsFilter([])
+        sut: KeywordsFilter[TextualMessage] = KeywordsFilter([])
         assert await sut.filter(make_message("任意内容")) is True
 
 
@@ -44,11 +44,11 @@ class TestNormalization:
     """Matching runs on normalized text; case and punctuation cannot hide a hit."""
 
     async def test_case_insensitive_hit(self, make_message: MakeMessage) -> None:
-        sut: KeywordsFilter[BaseMessage] = KeywordsFilter(["BadWord"])
+        sut: KeywordsFilter[TextualMessage] = KeywordsFilter(["BadWord"])
         assert await sut.filter(make_message("contains BADWORD here")) is False
 
     async def test_punctuated_text_hit(self, make_message: MakeMessage) -> None:
-        sut: KeywordsFilter[BaseMessage] = KeywordsFilter(["bad word"])
+        sut: KeywordsFilter[TextualMessage] = KeywordsFilter(["bad word"])
         assert await sut.filter(make_message("Bad-WORD!!")) is False
 
 
@@ -61,10 +61,10 @@ class TestLoadFromFile:
         make_message: MakeMessage,
     ) -> None:
         target = make_keyword_file("违禁词")
-        from_str: KeywordsFilter[BaseMessage] = KeywordsFilter.load_from_file(
+        from_str: KeywordsFilter[TextualMessage] = KeywordsFilter.load_from_file(
             str(target),
         )
-        from_path: KeywordsFilter[BaseMessage] = KeywordsFilter.load_from_file(target)
+        from_path: KeywordsFilter[TextualMessage] = KeywordsFilter.load_from_file(target)
         message = make_message("含违禁词的文本")
         assert await from_str.filter(message) is False
         assert await from_path.filter(message) is False
@@ -75,7 +75,7 @@ class TestLoadFromFile:
         make_message: MakeMessage,
     ) -> None:
         target = make_keyword_file("违禁词", "", "   ", "!!!")
-        sut: KeywordsFilter[BaseMessage] = KeywordsFilter.load_from_file(target)
+        sut: KeywordsFilter[TextualMessage] = KeywordsFilter.load_from_file(target)
         # Symbol-only lines normalize to the empty string and are dropped.
         assert await sut.filter(make_message("!!!")) is True
         assert await sut.filter(make_message("违禁词")) is False
@@ -86,5 +86,5 @@ class TestLoadFromFile:
         make_message: MakeMessage,
     ) -> None:
         target = make_keyword_file("BAD word")
-        sut: KeywordsFilter[BaseMessage] = KeywordsFilter.load_from_file(target)
+        sut: KeywordsFilter[TextualMessage] = KeywordsFilter.load_from_file(target)
         assert await sut.filter(make_message("bad word")) is False

@@ -62,9 +62,9 @@ config = BitongueConfig(
 
 该组合的含义：最坏情况下，一条消息从入库到被处理完成不会超过约 12 秒；过期或超时的消息都不会阻塞后续消息的消费。
 
-## 过滤器配置（`SparseFilter`）
+## 过滤器配置（`SparseTextualFilter`）
 
-`SparseFilter` 的行为由构造参数与两个 policy 结构体描述（完整字段见
+`SparseTextualFilter` 的行为由构造参数与两个 policy 结构体描述（完整字段见
 [API 参考](../api)中对应模块；此处列出调参最常触及的部分）：
 
 | 参数 / 字段 | 默认 | 语义 |
@@ -86,9 +86,9 @@ config = BitongueConfig(
 环境变量 `FASTEMBED_CACHE_PATH` 控制缓存位置；`KeywordsFilter` 无网络行为，
 无需配置。
 
-## 过滤器配置（`NeuroFilter`）
+## 过滤器配置（`NeuroTextualFilter`）
 
-`NeuroFilter` 的行为由 `NeuroFilterPolicy` 一个结构体描述：
+`NeuroTextualFilter` 的行为由 `NeuroFilterPolicy` 一个结构体描述：
 
 | 字段 | 默认 | 语义 |
 |-|-|-|
@@ -99,7 +99,7 @@ config = BitongueConfig(
 | `timeout` | `10.0` | 单次模型判定的秒数上限；超时以 `TimeoutError` 抛出 |
 
 两层超时的分工：`timeout` 管单次模型调用本身，超出即抛错；整个过滤阶段仍计入
-`handle_timeout` 预算。给带 `NeuroFilter` 的管线配置时，`handle_timeout` 需要
+`handle_timeout` 预算。给带 `NeuroTextualFilter` 的管线配置时，`handle_timeout` 需要
 容纳模型调用的典型延迟。
 
 端点与模型的能力声明在 `OpenAIClientProvider` 中定制：客户端向 autogen 声明

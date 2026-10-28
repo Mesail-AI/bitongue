@@ -28,11 +28,11 @@ Bitongue is an async message flowing library: producers put messages into an in-
 
 - **In-memory message flowing window**: a bounded buffer built on anyio memory streams, with a configurable window size and message lifetime; expired messages are dropped automatically at consumption time, and rejected or expired messages never block the rest
 - **Filter-chain admission**: messages pass through the filter chain before processing; filters run concurrently and a message is released only when every filter accepts it, while rejected messages are dropped silently
-- **Built-in filters**: the keyword blocklist `KeywordsFilter` (Aho-Corasick with normalized matching), duplicate interception via `SparseFilter` (qdrant sparse retrieval — similar to the corpus means rejected), and model judgment via `NeuroFilter` (natural-language rules decided by a large language model); filters implementing `FilterLifecycle` are started and stopped by the orchestrator
+- **Built-in filters**: the keyword blocklist `KeywordsFilter` (Aho-Corasick with normalized matching), duplicate interception via `SparseTextualFilter` (qdrant sparse retrieval — similar to the corpus means rejected), and model judgment via `NeuroTextualFilter` (natural-language rules decided by a large language model); filters implementing `FilterLifecycle` are started and stopped by the orchestrator
 - **Handler extension point**: implement one async `handle(message) -> result` method to plug in your business logic, keeping flow mechanics decoupled from message processing
 - **Two layers of timeout protection**: the flowing timeout bounds how long a message stays alive in the window, and the handle timeout caps the combined time a single message may spend in filtering and handling (a timeout actually cancels the in-flight work); timed-out messages are skipped without blocking the rest
 - **Type-safe data structures**: messages and results are msgspec structs with built-in dict and JSON serialization, and generic parameters flow through from send to result
-- **Layered dependencies**: the core (flowing window, orchestrator, keyword filter) depends only on a few packages such as anyio, msgspec, and pyahocorasick; the domain dependencies of duplicate interception via `SparseFilter` (fastembed, jieba, qdrant-client) ship as the optional `sparse` extra, and those of model judgment via `NeuroFilter` (autogen) ship as the optional `neuro` extra
+- **Layered dependencies**: the core (flowing window, orchestrator, keyword filter) depends only on a few packages such as anyio, msgspec, and pyahocorasick; the domain dependencies of duplicate interception via `SparseTextualFilter` (fastembed, jieba, qdrant-client) ship as the optional `sparse` extra, and those of model judgment via `NeuroTextualFilter` (autogen) ship as the optional `neuro` extra
 
 ## Installation
 
@@ -50,7 +50,7 @@ Python ≥ 3.12 is required. If the package is not yet published to PyPI, instal
 uv add git+https://github.com/Ahsen17/bitongue.git
 ```
 
-Using the built-in duplicate-interception filter `SparseFilter` additionally
+Using the built-in duplicate-interception filter `SparseTextualFilter` additionally
 requires the optional `sparse` extra (pip users write
 `pip install "bitongue[sparse]"`):
 
@@ -58,7 +58,7 @@ requires the optional `sparse` extra (pip users write
 uv add "bitongue[sparse]"
 ```
 
-Using the built-in model-judgment filter `NeuroFilter` additionally requires
+Using the built-in model-judgment filter `NeuroTextualFilter` additionally requires
 the optional `neuro` extra (pip users write `pip install "bitongue[neuro]"`):
 
 ```bash
@@ -76,7 +76,7 @@ import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
 from bitongue.filter import BaseFilter
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 from bitongue.handler import BaseHandler, BaseResult
 
 
@@ -86,17 +86,17 @@ class UpperResult(BaseResult):
     text: str
 
 
-class NonEmptyFilter(BaseFilter[BaseMessage]):
+class NonEmptyFilter(BaseFilter[TextualMessage]):
     """A filter that drops messages with empty text."""
 
-    async def filter(self, message: BaseMessage) -> bool:
+    async def filter(self, message: TextualMessage) -> bool:
         return bool(message.text)
 
 
-class UpperHandler(BaseHandler[BaseMessage, UpperResult]):
+class UpperHandler(BaseHandler[TextualMessage, UpperResult]):
     """A handler that uppercases the text."""
 
-    async def handle(self, message: BaseMessage) -> UpperResult:
+    async def handle(self, message: TextualMessage) -> UpperResult:
         return UpperResult(id=message.id, text=(message.text or "").upper())
 
 
@@ -111,8 +111,8 @@ async def main() -> None:
     await client.start()
     # The id is generated on the business side and passed through; real
     # applications typically reuse an identifier they already have.
-    await client.send(BaseMessage(id=uuid4(), type="text", text="hello bitongue"))
-    await client.send(BaseMessage(id=uuid4(), type="text", text=""))  # dropped by the filter
+    await client.send(TextualMessage(id=uuid4(), text="hello bitongue"))
+    await client.send(TextualMessage(id=uuid4(), text=""))  # dropped by the filter
 
     async for result in client.result():
         print(result.text)  # HELLO BITONGUE

@@ -2,9 +2,9 @@
 
 Bitongue 把消息处理拆成五个各自独立、职责单一的概念。本页逐一说明它们的职责、协作方式与边界行为。
 
-## 消息与条目（`BaseMessage` / `MessageEntry`）
+## 消息与条目（`BaseMessage` / `TextualMessage` / `MessageEntry`）
 
-`BaseMessage` 是消息的基类（同时是所有数据结构共用的 `BaseStruct` msgspec 结构体的子类），当前定义了文本消息的字段：`id`（调用方传入的唯一标识——bitongue 不代为生成，业务侧已有的 ID 直接透传即可）、`type`（固定为 `"text"`）与 `text`（可选文本内容）。它继承的 `BaseStruct` 提供 `to_dict` / `from_dict` / `to_json` / `from_json` 序列化能力，因此每条消息天然可以在字典、JSON 与对象之间互转。
+`BaseMessage` 是消息的基类（同时是所有数据结构共用的 `BaseStruct` msgspec 结构体的子类），只定义消息的最小信封：`id`（调用方传入的唯一标识——bitongue 不代为生成，业务侧已有的 ID 直接透传即可）。文本消息 `TextualMessage` 是默认的具体消息类型，在其上补充两个字段：`type`（固定为 `"text"` 的载荷种类标记）与 `text`（可选文本内容，为 `None` 表示消息不带文本负载）。它们继承的 `BaseStruct` 提供 `to_dict` / `from_dict` / `to_json` / `from_json` 序列化能力，因此每条消息天然可以在字典、JSON 与对象之间互转；其他载荷形态的消息可以继承 `BaseMessage` 自行扩展。
 
 消息被发送时并不会直接进入缓冲，而是先被包装成 `MessageEntry`：除消息本体之外，还记录 `enter_time`（入库时刻）与 `timeout`（存活秒数），供流窗口做过期剔除。
 
@@ -37,7 +37,7 @@ async def filter(self, message: T) -> bool:
 
 除自定义 Protocol 实现外，`bitongue.filter` 还提供三个开箱即用的内置过滤器。
 三者遵循同一个 `True`/`False` 契约，但取向不同：`KeywordsFilter` 是**关键词黑名单**
-（命中即拒），`SparseFilter` 是**判重拦截**（与语料相似即拒），`NeuroFilter` 是
+（命中即拒），`SparseTextualFilter` 是**判重拦截**（与语料相似即拒），`NeuroTextualFilter` 是
 **模型判定**（按自然语言规则交给大语言模型裁决）。
 
 ### `KeywordsFilter` — 关键词黑名单
@@ -53,7 +53,7 @@ async def filter(self, message: T) -> bool:
 - 词表可来自列表或 `load_from_file`（逐行读取、UTF-8、忽略空行），两条构造路径
   行为一致；自动机在构造期完成构建，`filter` 是纯查询，无首次调用开销。
 
-### `SparseFilter` — 基于稀疏检索的判重拦截
+### `SparseTextualFilter` — 基于稀疏检索的判重拦截
 
 把参考语料嵌入 qdrant 稀疏集合（BM25 词频权重 + IDF 修正），每条消息作为二值
 查询向量检索语料：
@@ -77,7 +77,7 @@ async def filter(self, message: T) -> bool:
   `host=None`）；
 - **语料分块由调用者负责**：每个字符串就是一个可检索单元。
 
-### `NeuroFilter` — 基于大语言模型的规则判定
+### `NeuroTextualFilter` — 基于大语言模型的规则判定
 
 把过滤规则与消息文本一起交给 OpenAI 兼容的对话端点（内部经由
 [autogen](https://microsoft.github.io/autogen/) 的 `AssistantAgent`），由模型
@@ -96,8 +96,8 @@ async def filter(self, message: T) -> bool:
   消息的文本不会进入后一条的请求；单实例不可并发调用（编排器的单消费者管线
   已保证串行）；
 - **生命周期**：构造只保存配置、不发起网络请求；`start()` 构建代理与模型
-  客户端，未启动就调用 `filter` 抛 `RuntimeError`。与 `SparseFilter` 的懒
-  初始化不同，`NeuroFilter` 必须先启动——交给编排器时由 `client.start()`
+  客户端，未启动就调用 `filter` 抛 `RuntimeError`。与 `SparseTextualFilter` 的懒
+  初始化不同，`NeuroTextualFilter` 必须先启动——交给编排器时由 `client.start()`
   统一处理；
 - **配置**：`NeuroFilterPolicy`（端点 `base_url`、`api_key`、模型 `model`、
   规则 `rules`、单次判定超时 `timeout`）；端点与模型能力声明的定制点是
@@ -106,14 +106,14 @@ async def filter(self, message: T) -> bool:
 - **依赖**：随可选依赖组 `neuro` 发布，从独立子包导入：
 
 ```python
-from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+from bitongue.filter.neuro import NeuroTextualFilter, NeuroFilterPolicy
 ```
 
 判定结果类型是 pydantic 模型——这是 autogen 结构化输出的强制要求，也是整个
 库对「数据结构一律 msgspec」约定的唯一例外。
 
 支撑工具 `Normalizer`（文本归一化）可独立使用；`JiebaTokenizer`（中文搜索引擎
-模式分词）随 `SparseFilter` 位于 sparse 子包（`bitongue.filter.sparse`），
+模式分词）随 `SparseTextualFilter` 位于 sparse 子包（`bitongue.filter.sparse`），
 使用需安装 `sparse` 可选依赖组。
 
 ## 处理器与结果（`BaseHandler` / `BaseResult` / `MessageHandleFailure`）
@@ -124,7 +124,7 @@ from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
 async def handle(self, message: T) -> R:
 ```
 
-`R` 必须是 `BaseResult` 的子类 —— 处理结果与消息一样是 msgspec 结构体，具备序列化能力；基类自带 `id` 字段（与 `BaseMessage.id` 同一约定：由调用方传入的业务侧标识，惯例上镜像来源消息的 `id`），子类声明处理器产出的其余字段。把结果类型作为泛型参数显式声明（`BaseHandler[BaseMessage, UpperResult]`），可以从发送到取结果的整个链路都获得类型检查。
+`R` 必须是 `BaseResult` 的子类 —— 处理结果与消息一样是 msgspec 结构体，具备序列化能力；基类自带 `id` 字段（与 `BaseMessage.id` 同一约定：由调用方传入的业务侧标识，惯例上镜像来源消息的 `id`），子类声明处理器产出的其余字段。把结果类型作为泛型参数显式声明（`BaseHandler[TextualMessage, UpperResult]`），可以从发送到取结果的整个链路都获得类型检查。
 
 失败按故障的作用域分级。处理器抛出的异常是消息级故障：被包装成 `MessageHandleError` 后转为 `MessageHandleFailure` 信封（携带来源消息与错误文本）按序产出，结果流继续消费后续消息——`result()` 的产出类型因此是 `R | MessageHandleFailure`，消费者用 `isinstance` 区分正常结果与失败信封。单条消息在过滤与处理两段的总耗时超过配置的 `handle_timeout`，则该条消息被静默跳过（不产出结果，也不中断后续消费）。过滤器抛出的异常是管道级故障：编排器等全部过滤器执行完毕后，把所有异常汇总为一个 `ExceptionGroup` 上抛并终止结果流——准入机制失效后，后续任何消息都无法判定；并发的兄弟异常互不吞没。
 

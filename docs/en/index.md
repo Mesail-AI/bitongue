@@ -11,7 +11,7 @@ Bitongue splits "receiving, filtering, and processing" into three independently 
 - **Handler extension point**: implement one async `handle(message) -> result` method to plug in your business; a handling timeout only affects the current message, never blocking the rest
 - **Two layers of timeout protection**: window lifetime plus a per-message timeout covering filtering and handling combined — details in [Configuration](guide/configuration.md)
 - **Type safe**: messages and results are msgspec structs with built-in dict / JSON serialization, and generic parameters flow through from send to result
-- **Minimal dependencies**: the core relies only on a few packages such as anyio and msgspec; the domain dependencies of `SparseFilter` and `NeuroFilter` ship as the optional `sparse` and `neuro` extras
+- **Minimal dependencies**: the core relies only on a few packages such as anyio and msgspec; the domain dependencies of `SparseTextualFilter` and `NeuroTextualFilter` ship as the optional `sparse` and `neuro` extras
 
 Requires Python ≥ 3.12.
 

@@ -6,23 +6,35 @@ from uuid import UUID, uuid4
 import msgspec
 import pytest
 
-from bitongue.flow import BaseMessage, MessageEntry
+from bitongue.flow import BaseMessage, MessageEntry, TextualMessage
 
 
 class TestBaseMessage:
-    """Message construction contract."""
-
-    def test_text_defaults_to_none(self) -> None:
-        message = BaseMessage(id=uuid4(), type="text")
-
-        assert message.text is None
+    """Minimal envelope contract: caller-supplied identity only."""
 
     def test_id_round_trips_through_serialization(self) -> None:
-        message = BaseMessage(id=uuid4(), type="text", text="m")
+        message = BaseMessage(id=uuid4())
 
         assert BaseMessage.from_dict(message.to_dict()) == message
         assert BaseMessage.from_json(message.to_json()) == message
         assert isinstance(BaseMessage.from_dict(message.to_dict()).id, UUID)
+
+
+class TestTextualMessage:
+    """Text payload contract: defaults, serialization, and the literal
+    type constraint."""
+
+    def test_type_defaults_to_text_and_text_to_none(self) -> None:
+        message = TextualMessage(id=uuid4())
+
+        assert message.type == "text"
+        assert message.text is None
+
+    def test_fields_round_trip_through_serialization(self) -> None:
+        message = TextualMessage(id=uuid4(), text="m")
+
+        assert TextualMessage.from_dict(message.to_dict()) == message
+        assert TextualMessage.from_json(message.to_json()) == message
 
     def test_rejects_unknown_type_in_conversion(self) -> None:
         # msgspec does not validate at __init__; Literal constraints apply
@@ -33,7 +45,7 @@ class TestBaseMessage:
         with pytest.raises(msgspec.ValidationError):
             msgspec.convert(
                 {"id": str(uuid4()), "type": bogus, "text": "x"},
-                type=BaseMessage,
+                type=TextualMessage,
             )
 
 
@@ -41,8 +53,6 @@ class TestMessageEntry:
     """Entry field defaults."""
 
     def test_timeout_defaults_to_none(self) -> None:
-        message = BaseMessage(id=uuid4(), type="text", text="m")
-
-        entry = MessageEntry(message=message, enter_time=1.0)
+        entry = MessageEntry(message=BaseMessage(id=uuid4()), enter_time=1.0)
 
         assert entry.timeout is None
