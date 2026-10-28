@@ -27,14 +27,14 @@ pip install bitongue
 uv add git+https://github.com/Ahsen17/bitongue.git
 ```
 
-内置的 `SparseFilter` 依赖 fastembed、jieba 与 qdrant-client，随可选依赖组
+内置的 `SparseTextualFilter` 依赖 fastembed、jieba 与 qdrant-client，随可选依赖组
 `sparse` 发布，按需安装（pip 用户写 `pip install "bitongue[sparse]"`）：
 
 ```bash
 uv add "bitongue[sparse]"
 ```
 
-内置的 `NeuroFilter` 依赖 autogen 相关包，随可选依赖组 `neuro` 发布，按需安装
+内置的 `NeuroTextualFilter` 依赖 autogen 相关包，随可选依赖组 `neuro` 发布，按需安装
 （pip 用户写 `pip install "bitongue[neuro]"`）：
 
 ```bash
@@ -59,7 +59,7 @@ import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
 from bitongue.filter import BaseFilter
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 from bitongue.handler import BaseHandler, BaseResult
 
 
@@ -69,17 +69,17 @@ class UpperResult(BaseResult):
     text: str
 
 
-class NonEmptyFilter(BaseFilter[BaseMessage]):
+class NonEmptyFilter(BaseFilter[TextualMessage]):
     """过滤器：丢弃空文本消息。"""
 
-    async def filter(self, message: BaseMessage) -> bool:
+    async def filter(self, message: TextualMessage) -> bool:
         return bool(message.text)
 
 
-class UpperHandler(BaseHandler[BaseMessage, UpperResult]):
+class UpperHandler(BaseHandler[TextualMessage, UpperResult]):
     """处理器：把文本转成大写。"""
 
-    async def handle(self, message: BaseMessage) -> UpperResult:
+    async def handle(self, message: TextualMessage) -> UpperResult:
         return UpperResult(id=message.id, text=(message.text or "").upper())
 
 
@@ -93,8 +93,8 @@ async def main() -> None:
 
     await client.start()
     # id 由业务侧生成后透传；真实场景通常用业务系统已有的标识
-    await client.send(BaseMessage(id=uuid4(), type="text", text="hello bitongue"))
-    await client.send(BaseMessage(id=uuid4(), type="text", text=""))  # 会被过滤器丢弃
+    await client.send(TextualMessage(id=uuid4(), text="hello bitongue"))
+    await client.send(TextualMessage(id=uuid4(), text=""))  # 会被过滤器丢弃
 
     async for result in client.result():
         print(result.text)  # HELLO BITONGUE
@@ -128,7 +128,7 @@ HELLO BITONGUE
 
 ## 使用内置过滤器
 
-除了自己实现 `BaseFilter`，`bitongue.filter` 还内置两个开箱即用的过滤器。
+除了自己实现 `BaseFilter`，`bitongue.filter` 还内置三个开箱即用的过滤器。
 以关键词黑名单为例，只需替换过滤器集合：
 
 ```python
@@ -141,23 +141,23 @@ client = Bitongue(
 )
 ```
 
-另一个内置过滤器 `SparseFilter` 基于 qdrant 稀疏检索做判重拦截：给定参考语料，
+另一个内置过滤器 `SparseTextualFilter` 基于 qdrant 稀疏检索做判重拦截：给定参考语料，
 与语料相似的消息被拒绝、无关消息放行，适合近重复内容准入；它需要安装可选依赖组
 `sparse`（见上文安装一节），并从 sparse 子包导入：
 
 ```python
-from bitongue.filter.sparse import SparseFilter
+from bitongue.filter.sparse import SparseTextualFilter
 ```
 
-第三个内置过滤器 `NeuroFilter` 把自然语言规则与消息文本一起交给大语言模型
+第三个内置过滤器 `NeuroTextualFilter` 把自然语言规则与消息文本一起交给大语言模型
 裁决，适合关键词难以穷举的语义类准入（例如「拒绝带攻击性的内容」）。它需要
 安装可选依赖组 `neuro`（见上文安装一节），从独立子包导入，并且必须先启动——
 交给编排器时由 `client.start()` 自动完成：
 
 ```python
-from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+from bitongue.filter.neuro import NeuroTextualFilter, NeuroFilterPolicy
 
-neuro = NeuroFilter(
+neuro = NeuroTextualFilter(
     NeuroFilterPolicy(
         base_url="https://api.example.com/v1",
         api_key="<your-api-key>",

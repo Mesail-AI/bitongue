@@ -16,8 +16,8 @@ Bitongue 把「消息的接收、筛选、处理」拆成三个可独立演化�
   行为细节见[配置说明](guide/configuration.md)
 - **类型安全**：消息与结果均为 msgspec 结构体，自带字典 / JSON 序列化，
   泛型参数贯穿发送到结果的全流程
-- **极简依赖**：核心仅依赖 anyio、msgspec 等少量包；`SparseFilter` 与
-  `NeuroFilter` 所需的领域依赖分别随可选依赖组 `sparse`、`neuro` 按需安装
+- **极简依赖**：核心仅依赖 anyio、msgspec 等少量包；`SparseTextualFilter` 与
+  `NeuroTextualFilter` 所需的领域依赖分别随可选依赖组 `sparse`、`neuro` 按需安装
 
 要求 Python ≥ 3.12。
 

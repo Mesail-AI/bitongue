@@ -62,9 +62,9 @@ config = BitongueConfig(
 
 The meaning of this combination: in the worst case, a message takes no more than about 12 seconds from entering the buffer to finishing processing; expired or timed-out messages never block the consumption of later ones.
 
-## Filter configuration (`SparseFilter`)
+## Filter configuration (`SparseTextualFilter`)
 
-`SparseFilter` behavior is described by its constructor arguments and two
+`SparseTextualFilter` behavior is described by its constructor arguments and two
 policy structs (the full field lists live in the
 [API reference](../api); the tuning-relevant parts are below):
 
@@ -90,9 +90,9 @@ place the cache with `Bm25Policy.cache_dir` or the `FASTEMBED_CACHE_PATH`
 environment variable. `KeywordsFilter` performs no network access and needs
 no configuration.
 
-## Filter configuration (`NeuroFilter`)
+## Filter configuration (`NeuroTextualFilter`)
 
-`NeuroFilter` behavior is described by a single struct, `NeuroFilterPolicy`:
+`NeuroTextualFilter` behavior is described by a single struct, `NeuroFilterPolicy`:
 
 | Field | Default | Meaning |
 |-|-|-|
@@ -104,7 +104,7 @@ no configuration.
 
 Division of labor between the two timeout layers: `timeout` governs a single
 model call and raises once exceeded, while the whole filtering phase still
-counts against the `handle_timeout` budget — a pipeline with `NeuroFilter`
+counts against the `handle_timeout` budget — a pipeline with `NeuroTextualFilter`
 needs a `handle_timeout` that accommodates the model call's typical latency.
 
 Endpoint and model capability claims are customized in

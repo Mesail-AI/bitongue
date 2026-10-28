@@ -2,9 +2,9 @@
 
 Bitongue splits message handling into five independent, single-purpose concepts. This page explains each one's responsibility, how they cooperate, and their boundary behavior.
 
-## Messages and entries (`BaseMessage` / `MessageEntry`)
+## Messages and entries (`BaseMessage` / `TextualMessage` / `MessageEntry`)
 
-`BaseMessage` is the message base class (itself a subclass of `BaseStruct`, the msgspec struct wrapper shared by all data structures). It currently defines the fields of a text message: `id` (a caller-supplied unique identifier — bitongue never generates one; pass through the business-side ID you already have), `type` (fixed to `"text"`), and `text` (optional text content). The inherited `BaseStruct` provides `to_dict` / `from_dict` / `to_json` / `from_json`, so every message converts between dicts, JSON, and objects out of the box.
+`BaseMessage` is the message base class (itself a subclass of `BaseStruct`, the msgspec struct wrapper shared by all data structures). It defines only the minimal message envelope: `id` (a caller-supplied unique identifier — bitongue never generates one; pass through the business-side ID you already have). The text message `TextualMessage` is the default concrete message type and adds two fields: `type` (a payload-kind tag, fixed to `"text"`) and `text` (optional text content; `None` means the message carries no text payload). The inherited `BaseStruct` provides `to_dict` / `from_dict` / `to_json` / `from_json`, so every message converts between dicts, JSON, and objects out of the box; messages with other payload shapes can subclass `BaseMessage` to add their own fields.
 
 A message does not enter the buffer directly when sent; it is first wrapped into a `MessageEntry` that, besides the message itself, records `enter_time` (the moment of entry) and `timeout` (the lifetime in seconds) for the flowing window's expiry checks.
 
@@ -38,8 +38,8 @@ Return `True` to release the message, `False` to reject it. Key points:
 Besides your own Protocol implementations, `bitongue.filter` ships three
 ready-to-use filters. They share the same `True`/`False` contract but take
 different admissions: `KeywordsFilter` is a **keyword blocklist** (a hit
-rejects), `SparseFilter` is **duplicate interception** (similarity to the
-corpus rejects), and `NeuroFilter` is **model judgment** (natural-language
+rejects), `SparseTextualFilter` is **duplicate interception** (similarity to the
+corpus rejects), and `NeuroTextualFilter` is **model judgment** (natural-language
 rules decided by a large language model).
 
 ### `KeywordsFilter` — keyword blocklist
@@ -60,7 +60,7 @@ Multi-keyword matching on an Aho-Corasick automaton:
   The automaton is built eagerly in the constructor — `filter` is a pure
   lookup with no first-call cost.
 
-### `SparseFilter` — duplicate interception via sparse retrieval
+### `SparseTextualFilter` — duplicate interception via sparse retrieval
 
 The reference corpus is embedded into a qdrant sparse collection (BM25
 term-frequency weights with IDF modification); each message is embedded as a
@@ -95,7 +95,7 @@ binary query vector and searched against it:
 - **Corpus chunking is the caller's responsibility**: each string is one
   searchable unit.
 
-### `NeuroFilter` — rule judgment by a large language model
+### `NeuroTextualFilter` — rule judgment by a large language model
 
 The filtering rules and the message text travel together to an
 OpenAI-compatible chat endpoint (via autogen's `AssistantAgent`
@@ -122,8 +122,8 @@ rules:
   serializes them);
 - **Lifecycle**: construction only stores the configuration and contacts
   nothing; `start()` builds the agent and the model client, and calling
-  `filter` before that raises `RuntimeError`. Unlike `SparseFilter`'s lazy
-  initialization, `NeuroFilter` must be started first — handing it to an
+  `filter` before that raises `RuntimeError`. Unlike `SparseTextualFilter`'s lazy
+  initialization, `NeuroTextualFilter` must be started first — handing it to an
   orchestrator covers this through `client.start()`;
 - **Configuration**: `NeuroFilterPolicy` (endpoint `base_url`, `api_key`,
   model `model`, rules `rules`, per-verdict `timeout`); the customization
@@ -134,7 +134,7 @@ rules:
   own subpackage:
 
 ```python
-from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+from bitongue.filter.neuro import NeuroTextualFilter, NeuroFilterPolicy
 ```
 
 The verdict type is a pydantic model — a hard requirement of autogen's
@@ -143,7 +143,7 @@ structured output, and the library's single deliberate exception to its
 
 The supporting tool `Normalizer` (text normalization) is usable on its own;
 `JiebaTokenizer` (Chinese search-mode segmentation) lives in the sparse
-subpackage (`bitongue.filter.sparse`) alongside `SparseFilter` and requires
+subpackage (`bitongue.filter.sparse`) alongside `SparseTextualFilter` and requires
 the optional `sparse` extra.
 
 ## Handlers and results (`BaseHandler` / `BaseResult` / `MessageHandleFailure`)
@@ -154,7 +154,7 @@ the optional `sparse` extra.
 async def handle(self, message: T) -> R:
 ```
 
-`R` must be a subclass of `BaseResult` — results are msgspec structs just like messages, with the same serialization abilities; the base class already carries an `id` field (same convention as `BaseMessage.id`: a business-side identifier supplied by the caller, conventionally mirrored from the source message), and the subclass declares the remaining fields the handler yields. Declaring the result type as a generic parameter (`BaseHandler[BaseMessage, UpperResult]`) gives you type checking across the whole path from send to result.
+`R` must be a subclass of `BaseResult` — results are msgspec structs just like messages, with the same serialization abilities; the base class already carries an `id` field (same convention as `BaseMessage.id`: a business-side identifier supplied by the caller, conventionally mirrored from the source message), and the subclass declares the remaining fields the handler yields. Declaring the result type as a generic parameter (`BaseHandler[TextualMessage, UpperResult]`) gives you type checking across the whole path from send to result.
 
 Failures follow the scope of the fault. An exception a handler raises is a message-scoped failure: it is wrapped into `MessageHandleError` and emitted in order as a `MessageHandleFailure` envelope (carrying the source message and the error text), and the stream keeps consuming later messages — the yield type of `result()` is therefore `R | MessageHandleFailure`, and consumers tell normal results and failure envelopes apart with `isinstance`. If the combined time a message spends in filtering and handling exceeds the configured `handle_timeout`, that message is skipped silently (no result is produced, and consumption continues). An exception a filter raises is a pipeline-scoped failure: the orchestrator waits for every filter to finish, combines all their exceptions into one `ExceptionGroup`, and raises it, terminating the result stream — a broken admission mechanism cannot decide any further message, and concurrent sibling exceptions are never swallowed.
 

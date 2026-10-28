@@ -34,8 +34,8 @@ Bitongue 是一个异步消息流处理库：生产者把消息投入内存流�
 - **过滤器链准入**：消息进入处理前经过过滤器链，过滤器并发执行、全部通过才放行，
   被拒绝的消息静默丢弃
 - **内置过滤器**：关键词黑名单 `KeywordsFilter`（Aho-Corasick，归一化匹配）、
-  判重拦截 `SparseFilter`（qdrant 稀疏检索，语料相似即拒）与模型判定
-  `NeuroFilter`（大语言模型按自然语言规则裁决）；
+  判重拦截 `SparseTextualFilter`（qdrant 稀疏检索，语料相似即拒）与模型判定
+  `NeuroTextualFilter`（大语言模型按自然语言规则裁决）；
   实现 `FilterLifecycle` 的过滤器由编排器统一启动与关闭
 - **处理器扩展点**：实现一个异步 `handle(message) -> result` 方法即可接入业务逻辑，
   消息流转机制与业务处理解耦
@@ -44,8 +44,8 @@ Bitongue 是一个异步消息流处理库：生产者把消息投入内存流�
 - **类型安全的数据结构**：消息与结果均为 msgspec 结构体，自带字典与 JSON 序列化，
   泛型参数贯穿发送到结果的全流程
 - **分层依赖**：核心（流窗口、编排器、关键词过滤器）仅依赖 anyio、msgspec、
-  pyahocorasick 等少量包；判重拦截 `SparseFilter` 的领域依赖（fastembed、jieba、
-  qdrant-client）随可选依赖组 `sparse` 按需安装；模型判定 `NeuroFilter` 的
+  pyahocorasick 等少量包；判重拦截 `SparseTextualFilter` 的领域依赖（fastembed、jieba、
+  qdrant-client）随可选依赖组 `sparse` 按需安装；模型判定 `NeuroTextualFilter` 的
   领域依赖（autogen）随可选依赖组 `neuro` 按需安装
 
 ## 安装
@@ -64,14 +64,14 @@ pip install bitongue
 uv add git+https://github.com/Ahsen17/bitongue.git
 ```
 
-使用内置判重过滤器 `SparseFilter` 时，还需安装可选依赖组 `sparse`
+使用内置判重过滤器 `SparseTextualFilter` 时，还需安装可选依赖组 `sparse`
 （pip 用户写 `pip install "bitongue[sparse]"`）：
 
 ```bash
 uv add "bitongue[sparse]"
 ```
 
-使用内置模型判定过滤器 `NeuroFilter` 时，还需安装可选依赖组 `neuro`
+使用内置模型判定过滤器 `NeuroTextualFilter` 时，还需安装可选依赖组 `neuro`
 （pip 用户写 `pip install "bitongue[neuro]"`）：
 
 ```bash
@@ -89,7 +89,7 @@ import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
 from bitongue.filter import BaseFilter
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 from bitongue.handler import BaseHandler, BaseResult
 
 
@@ -99,17 +99,17 @@ class UpperResult(BaseResult):
     text: str
 
 
-class NonEmptyFilter(BaseFilter[BaseMessage]):
+class NonEmptyFilter(BaseFilter[TextualMessage]):
     """过滤器：丢弃空文本消息。"""
 
-    async def filter(self, message: BaseMessage) -> bool:
+    async def filter(self, message: TextualMessage) -> bool:
         return bool(message.text)
 
 
-class UpperHandler(BaseHandler[BaseMessage, UpperResult]):
+class UpperHandler(BaseHandler[TextualMessage, UpperResult]):
     """处理器：把文本转成大写。"""
 
-    async def handle(self, message: BaseMessage) -> UpperResult:
+    async def handle(self, message: TextualMessage) -> UpperResult:
         return UpperResult(id=message.id, text=(message.text or "").upper())
 
 
@@ -123,8 +123,8 @@ async def main() -> None:
 
     await client.start()
     # id 由业务侧生成后透传；真实场景通常用业务系统已有的标识
-    await client.send(BaseMessage(id=uuid4(), type="text", text="hello bitongue"))
-    await client.send(BaseMessage(id=uuid4(), type="text", text=""))  # 会被过滤器丢弃
+    await client.send(TextualMessage(id=uuid4(), text="hello bitongue"))
+    await client.send(TextualMessage(id=uuid4(), text=""))  # 会被过滤器丢弃
 
     async for result in client.result():
         print(result.text)  # HELLO BITONGUE

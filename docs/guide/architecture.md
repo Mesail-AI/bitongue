@@ -10,7 +10,7 @@
 graph BT
     base["base<br/>BaseStruct · 异常体系"]
     flow["flow<br/>Flowing · BaseMessage · MessageEntry"]
-    filter["filter<br/>BaseFilter · KeywordsFilter · SparseFilter · NeuroFilter"]
+    filter["filter<br/>BaseFilter · KeywordsFilter · SparseTextualFilter · NeuroTextualFilter"]
     handler["handler<br/>BaseHandler · BaseResult"]
     client["client<br/>Bitongue · BitongueConfig"]
 
@@ -26,7 +26,7 @@ graph BT
 |-|-|-|
 | `base` | 数据结构地基与异常根 | `BaseStruct`、`BitongueError` 及其子类 |
 | `flow` | 内存流窗口：缓冲、计时、过期剔除 | `Flowing`、`BaseMessage`、`MessageEntry` |
-| `filter` | 消息准入门：Protocol 与内置过滤器 | `BaseFilter`、`KeywordsFilter`、`SparseFilter`、`NeuroFilter` |
+| `filter` | 消息准入门：Protocol 与内置过滤器 | `BaseFilter`、`KeywordsFilter`、`SparseTextualFilter`、`NeuroTextualFilter` |
 | `handler` | 业务处理扩展点（Protocol）与结果基类 | `BaseHandler`、`BaseResult` |
 | `client` | 生命周期编排与生产/消费两端 | `Bitongue`、`BitongueConfig` |
 
@@ -68,7 +68,7 @@ sequenceDiagram
 - **处理超时局部化**：`handle_timeout` 覆盖单条消息的过滤与处理两段；超时只影响该条消息（被跳过），不中断生成器。
 - **处理异常转为失败信封**：处理器抛出的异常被包装为 `MessageHandleError`，转为 `MessageHandleFailure` 信封（携带来源消息与错误文本）按序产出——单条消息的失败不终止结果流，消费者以 `isinstance` 区分结果与信封。
 - **过滤器异常汇总上抛**：过滤器抛出的异常由编排器等全部过滤器执行完毕后合并为一个 `ExceptionGroup` 上抛，终止结果流——准入是管道级设施，其失效意味着后续任何消息都无法判定；并发的兄弟异常互不吞没，响亮失败优于带内上报。
-- **过滤器生命周期可上收**：实现 `FilterLifecycle`（`start()`/`aclose()`）的过滤器由 `Bitongue.start()/shutdown()` 统一启动与关闭——如 `SparseFilter` 的建集合与连接管理、`NeuroFilter` 的代理与模型客户端构建，其初始化成本因此落在编排器启动阶段而非首条消息。
+- **过滤器生命周期可上收**：实现 `FilterLifecycle`（`start()`/`aclose()`）的过滤器由 `Bitongue.start()/shutdown()` 统一启动与关闭——如 `SparseTextualFilter` 的建集合与连接管理、`NeuroTextualFilter` 的代理与模型客户端构建，其初始化成本因此落在编排器启动阶段而非首条消息。
 
 ## 并发模型
 
