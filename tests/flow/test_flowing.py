@@ -4,7 +4,7 @@ import anyio
 import pytest
 from tests.conftest import MakeMessage, WaitUntil
 
-from bitongue.flow import BaseMessage, Flowing, FlowingNotInitializedError
+from bitongue.flow import BaseMessage, Flowing, FlowingNotInitializedError, TextualMessage
 
 
 class TestFlowingLifecycle:
@@ -96,7 +96,7 @@ class TestFlowingExpiry:
     ) -> None:
         clock = {"now": 1000.0}
         monkeypatch.setattr("bitongue.flow.flowing.time.time", lambda: clock["now"])
-        flow = Flowing[BaseMessage](size=4, timeout=10)
+        flow = Flowing[TextualMessage](size=4, timeout=10)
         await flow.start()
         first = make_message("first")
         await flow.draw(first)
@@ -105,7 +105,7 @@ class TestFlowingExpiry:
         await flow.draw(second)
 
         expected_count = 2 if delivered else 1
-        got: list[BaseMessage] = []
+        got: list[TextualMessage] = []
         async with anyio.create_task_group() as tg:
 
             async def drain() -> None:

@@ -7,10 +7,10 @@ import pytest
 
 from bitongue.client import Bitongue, BitongueConfig
 from bitongue.filter import BaseFilter
-from bitongue.flow import BaseMessage
+from bitongue.flow import TextualMessage
 from bitongue.handler import BaseHandler, BaseResult, MessageHandleFailure
 
-type MakeClient = Callable[..., Bitongue[BaseMessage, EchoResult]]
+type MakeClient = Callable[..., Bitongue[TextualMessage, EchoResult]]
 type MakeFilter = Callable[[bool], StubFilter]
 type MakeHandler = Callable[..., ScriptedHandler]
 type CollectResults = Callable[..., Awaitable[list[EchoResult]]]
@@ -27,9 +27,9 @@ class StubFilter:
 
     def __init__(self, verdict: bool) -> None:
         self.verdict = verdict
-        self.seen: list[BaseMessage] = []
+        self.seen: list[TextualMessage] = []
 
-    async def filter(self, message: BaseMessage) -> bool:
+    async def filter(self, message: TextualMessage) -> bool:
         self.seen.append(message)
         return self.verdict
 
@@ -45,9 +45,9 @@ class ScriptedHandler:
     ) -> None:
         self._delays = list(delays)
         self.error = error
-        self.seen: list[BaseMessage] = []
+        self.seen: list[TextualMessage] = []
 
-    async def handle(self, message: BaseMessage) -> EchoResult:
+    async def handle(self, message: TextualMessage) -> EchoResult:
         self.seen.append(message)
         delay = self._delays.pop(0) if self._delays else 0.0
         if delay:
@@ -58,13 +58,13 @@ class ScriptedHandler:
 
 
 def _build_client(
-    handler: BaseHandler[BaseMessage, EchoResult] | None = None,
+    handler: BaseHandler[TextualMessage, EchoResult] | None = None,
     *,
-    filters: Collection[BaseFilter[BaseMessage]] | None = None,
+    filters: Collection[BaseFilter[TextualMessage]] | None = None,
     flowing_size: int = 8,
     flowing_timeout: int | None = None,
     handle_timeout: float = 1.0,
-) -> Bitongue[BaseMessage, EchoResult]:
+) -> Bitongue[TextualMessage, EchoResult]:
     """Build a client with sensible defaults; every knob is overridable."""
     config = BitongueConfig(
         flowing_size=flowing_size,
@@ -79,7 +79,7 @@ def _build_client(
 
 
 async def _collect_results(
-    client: Bitongue[BaseMessage, EchoResult],
+    client: Bitongue[TextualMessage, EchoResult],
     *,
     count: int,
 ) -> list[EchoResult]:

@@ -1,4 +1,4 @@
-"""SparseFilter integration tests against a real qdrant server.
+"""SparseTextualFilter integration tests against a real qdrant server.
 
 Connection: ``BITONGUE_TEST_QDRANT_URL`` first, falling back to
 ``BITONGUE_TEST_QDRANT_HOST``/``BITONGUE_TEST_QDRANT_PORT`` (default
@@ -15,8 +15,8 @@ import pytest
 from qdrant_client import AsyncQdrantClient
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.filter.sparse import QdrantPolicy, SparseFilter
-from bitongue.flow import BaseMessage
+from bitongue.filter.sparse import QdrantPolicy, SparseTextualFilter
+from bitongue.flow import TextualMessage
 from test_integration.conftest import (
     CollectResults,
     MakeMessage,
@@ -56,7 +56,7 @@ async def _probe(policy: QdrantPolicy) -> bool:
     return True
 
 
-type MakeIntegrationFilter = Callable[..., SparseFilter[BaseMessage]]
+type MakeIntegrationFilter = Callable[..., SparseTextualFilter[TextualMessage]]
 
 
 @pytest.fixture
@@ -74,11 +74,11 @@ async def real_qdrant_policy() -> QdrantPolicy:
 async def make_integration_filter(
     real_qdrant_policy: QdrantPolicy,
 ) -> AsyncIterator[MakeIntegrationFilter]:
-    """Factory fixture: a real-server SparseFilter; teardown closes it and
-    deletes the collection."""
+    """Factory fixture: a real-server SparseTextualFilter; teardown closes
+    it and deletes the collection."""
 
     raw = AsyncQdrantClient(**{**real_qdrant_policy.to_dict(), "timeout": 30})
-    created: list[tuple[SparseFilter[BaseMessage], str]] = []
+    created: list[tuple[SparseTextualFilter[TextualMessage], str]] = []
 
     def _make(
         documents: list[str],
@@ -86,9 +86,9 @@ async def make_integration_filter(
         filter_threshold: float = 0.8,
         normalize_scale: float = 5.0,
         collection_name: str | None = None,
-    ) -> SparseFilter[BaseMessage]:
+    ) -> SparseTextualFilter[TextualMessage]:
         name = collection_name or f"it_{uuid4().hex}"
-        sut: SparseFilter[BaseMessage] = SparseFilter(
+        sut: SparseTextualFilter[TextualMessage] = SparseTextualFilter(
             name,
             documents,
             qdrant_policy=real_qdrant_policy,
@@ -164,12 +164,8 @@ class TestClientAssembly:
 
         # The released message must share zero tokens with the corpus: even a
         # single overlapping token can score above the default threshold.
-        await client.send(
-            BaseMessage(id=uuid4(), type="text", text="端到端违规文案 变体")
-        )
-        await client.send(
-            BaseMessage(id=uuid4(), type="text", text="totally different subject")
-        )
+        await client.send(TextualMessage(id=uuid4(), text="端到端违规文案 变体"))
+        await client.send(TextualMessage(id=uuid4(), text="totally different subject"))
 
         results = await collect_results(client, count=1)
         await client.shutdown()

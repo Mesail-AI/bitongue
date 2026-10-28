@@ -1,4 +1,4 @@
-"""NeuroFilter integration tests against a real OpenAI-compatible endpoint.
+"""NeuroTextualFilter integration tests against a real OpenAI-compatible endpoint.
 
 Connection: ``BITONGUE_TEST_NEURO_BASE_URL``, ``BITONGUE_TEST_NEURO_API_KEY``
 and ``BITONGUE_TEST_NEURO_MODEL`` must all be set; the suite skips
@@ -12,8 +12,8 @@ from uuid import uuid4
 import pytest
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
-from bitongue.flow import BaseMessage
+from bitongue.filter.neuro import NeuroFilterPolicy, NeuroTextualFilter
+from bitongue.flow import TextualMessage
 from test_integration.conftest import ScriptedHandler
 
 pytestmark = pytest.mark.integration
@@ -50,11 +50,11 @@ class TestRealEndpoint:
         self,
         real_neuro_policy: NeuroFilterPolicy,
     ) -> None:
-        sut: NeuroFilter[BaseMessage] = NeuroFilter(real_neuro_policy)
+        sut: NeuroTextualFilter[TextualMessage] = NeuroTextualFilter(real_neuro_policy)
         await sut.start()
         try:
             verdict = await sut.filter(
-                BaseMessage(id=uuid4(), type="text", text="A plain friendly hello."),
+                TextualMessage(id=uuid4(), text="A plain friendly hello."),
             )
         finally:
             await sut.aclose()
@@ -64,7 +64,7 @@ class TestRealEndpoint:
         self,
         real_neuro_policy: NeuroFilterPolicy,
     ) -> None:
-        sut: NeuroFilter[BaseMessage] = NeuroFilter(real_neuro_policy)
+        sut: NeuroTextualFilter[TextualMessage] = NeuroTextualFilter(real_neuro_policy)
         config = BitongueConfig(
             flowing_size=8,
             flowing_timeout=30,
