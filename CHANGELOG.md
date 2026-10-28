@@ -1,3 +1,45 @@
+## [0.1.2] - 2026-10-28
+
+### 🚜 Refactor
+
+- *(flow)* Split TextualMessage out of BaseMessage
+- *(filter)* Rename NeuroFilter and SparseFilter to *TextualFilter
+
+### 📚 Documentation
+
+- Sync README and docs site with the message model changes
+
+### 🧪 Testing
+
+- Align suites with the message model split and filter renames
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Bump locked openai, httpcore2 and httpx2
+- Update dependencies and upgrade to v0.1.2
+## [0.1.1] - 2026-10-20
+
+### 🚀 Features
+
+- *(handler)* Add the MessageHandleFailure failure envelope
+
+### 🐛 Bug Fixes
+
+- *(client)* Make failure handling follow the scope of the fault
+
+### 🚜 Refactor
+
+- *(client)* Drop the reserved handle_concurrency config field
+
+### 📚 Documentation
+
+- Update changelog
+- Sync the failure-handling contract across readme and guides
+- Describe sequential handling and drop handle_concurrency mentions
+
+### ⚙️ Miscellaneous Tasks
+
+- Upgade to v0.1.1
 ## [0.1.0] - 2026-10-17
 
 ### 🚀 Features
