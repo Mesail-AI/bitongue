@@ -1,7 +1,7 @@
 [project]
 name = "bitongue"
 version = "0.1.3"
-description = "Bitongue - A message flowing noting library."
+description = "Bitongue - An asynchronous event flowing library."
 readme = "README.md"
 authors = [
     { name = "Ahsen17", email = "mesailedward@qq.com" }
