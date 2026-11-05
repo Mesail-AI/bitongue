@@ -1,10 +1,4 @@
-"""The in-memory message flowing window.
-
-The window is a bounded FIFO buffer built on an anyio memory stream.
-Producers :meth:`Flowing.draw` messages into it; the consumer iterates
-:meth:`Flowing.flow` and receives messages in send order, with entries that
-outlived their timeout silently dropped on the way out.
-"""
+"""In-memory bounded event stream window."""
 
 import time
 from collections.abc import AsyncGenerator
@@ -12,8 +6,7 @@ from typing import TYPE_CHECKING
 
 import anyio
 
-from .exceptions import FlowingNotInitializedError
-from .message import BaseMessage, MessageEntry
+from .events import Event, EventEntry
 
 if TYPE_CHECKING:
     from anyio.streams.memory import (
@@ -25,61 +18,61 @@ if TYPE_CHECKING:
 __all__ = ("Flowing",)
 
 
-class Flowing[T: BaseMessage]:
-    """A bounded in-memory window that buffers messages between ends.
+class Flowing[T: Event]:
+    """Bounded FIFO window for events in memory.
 
-    The window wraps each drawn message into a :class:`MessageEntry` that
-    records the entry time and the configured timeout. When the buffer is
-    full, producers wait until the consumer makes room, which acts as
-    natural backpressure. The window must be :meth:`start`-ed before use;
-    operating it while stopped raises :class:`FlowingNotInitializedError`.
+    Backed by an anyio memory object stream of capacity ``buffer_size``:
+    producers wait when the buffer is full, which gives natural
+    backpressure. Each event is wrapped in an :class:`EventEntry` at
+    send time; expiry is enforced on the consumer side — entries whose
+    window elapsed before consumption are silently skipped, never
+    reported as errors. The stream is single-consumer.
     """
 
     def __init__(
         self,
+        buffer_size: int,
         *,
-        size: int,
-        timeout: int | None = None,
+        timeout: float | None = None,
     ) -> None:
+        """Create an unstarted window.
 
-        self._size = size
+        Args:
+            buffer_size: Capacity of the underlying buffer; a full
+                buffer blocks producers.
+            timeout: Expiry window applied to every entry, or ``None``
+                for no expiry.
+        """
+
+        self._buffer_size = buffer_size
         self._timeout = timeout
 
-        self._sender: MemoryObjectSendStream[MessageEntry[T]] | None = None
-        self._receiver: MemoryObjectReceiveStream[MessageEntry[T]] | None = None
+        self._sender: MemoryObjectSendStream[EventEntry[T]] | None = None
+        self._receiver: MemoryObjectReceiveStream[EventEntry[T]] | None = None
 
         self._running = False
 
     @property
     def running(self) -> bool:
-        """Whether the window is currently running."""
+        """Whether the window is currently started."""
 
         return self._running
 
     async def start(self) -> None:
-        """Open the buffer and mark the window as running.
-
-        Idempotent: calling it on a running window does nothing. The memory
-        stream is created on the first start and recreated after a
-        :meth:`shutdown`, so entries never survive a full stop/start cycle.
-        """
+        """Start the window. Idempotent."""
 
         if self._running:
             return
 
         if self._sender is None or self._receiver is None:
             self._sender, self._receiver = anyio.create_memory_object_stream[
-                MessageEntry[T]
-            ](max_buffer_size=self._size)
+                EventEntry[T]
+            ](max_buffer_size=self._buffer_size)
 
         self._running = True
 
-    async def shutdown(self) -> None:
-        """Close both ends of the buffer and mark the window as stopped.
-
-        Idempotent: calling it on a stopped window does nothing. Entries
-        still inside the buffer are discarded with the stream.
-        """
+    async def close(self) -> None:
+        """Close both ends of the window. Idempotent."""
 
         if not self._running:
             return
@@ -94,53 +87,55 @@ class Flowing[T: BaseMessage]:
 
         self._running = False
 
-    async def draw(self, message: "T") -> None:
-        """Put a message into the window.
+    async def send(self, event: "T") -> None:
+        """Put an event into the window.
 
-        The message is wrapped into a :class:`MessageEntry` that records the
-        current time and the window's timeout. Waits while the buffer is
-        full until the consumer takes an entry.
+        Waits while the buffer is full. The entry's expiry clock starts
+        now.
+
+        Args:
+            event: The event to enqueue.
 
         Raises:
-            FlowingNotInitializedError: If the window is not running.
+            RuntimeError: If the window is not running.
         """
 
         if not self._running or self._sender is None:
-            raise FlowingNotInitializedError(
+            raise RuntimeError(
                 "Flowing is not running",
             )
 
         await self._sender.send(
-            MessageEntry[T](
-                message=message,
+            EventEntry[T](
+                event=event,
                 enter_time=time.time(),
                 timeout=self._timeout,
-            ),
+            )
         )
 
-    async def flow(self) -> AsyncGenerator["T", None]:
-        """Yield messages from the window in send order.
+    async def receive(self) -> AsyncGenerator["T", None]:
+        """Consume events in send order, one at a time.
 
-        Entries whose timeout has passed since their entry time are dropped
-        here, silently: expiry is enforced on the consumer side, so an
-        expired message produces nothing rather than an error. The stream
-        is single-consumer — only one task may iterate this generator at a
-        time.
+        Entries whose expiry window elapsed before consumption are
+        silently skipped.
+
+        Yields:
+            Events in send order, expired ones excluded.
 
         Raises:
-            FlowingNotInitializedError: If the window is not running.
+            RuntimeError: If the window is not running.
         """
 
         if not self._running or self._receiver is None:
-            raise FlowingNotInitializedError(
+            raise RuntimeError(
                 "Flowing is not running",
             )
 
         async for entry in self._receiver:
             if (
                 entry.timeout is not None
-                and int(time.time()) - entry.enter_time > entry.timeout
+                and time.time() - entry.enter_time > entry.timeout
             ):
                 continue
 
-            yield entry.message
+            yield entry.event

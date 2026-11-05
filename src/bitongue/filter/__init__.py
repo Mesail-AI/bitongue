@@ -1,10 +1,8 @@
-from .keywords import KeywordsFilter
-from .protocols import BaseFilter, FilterLifecycle
+from .protocols import Filter, FilterLifecycle
 from .utils import Normalizer
 
 __all__ = (
-    "BaseFilter",
+    "Filter",
     "FilterLifecycle",
-    "KeywordsFilter",
     "Normalizer",
 )

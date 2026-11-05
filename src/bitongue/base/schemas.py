@@ -1,100 +1,150 @@
-"""Base data structures shared across the whole library.
-
-Every bitongue data structure inherits from :class:`BaseStruct`, which layers
-serialization helpers on top of msgspec's ``Struct``: plain dictionaries,
-sorted-key JSON strings, and back again.
-"""
+"""Base structures for data schemas."""
 
 from typing import Any, Self, cast
 
-from msgspec import Struct, convert, json, to_builtins
-
-from .exceptions import (
-    ConversionError,
-    DeserializationError,
-    SerializationError,
-)
+from msgspec import Struct, convert, json, to_builtins, toml, yaml
 
 __all__ = ("BaseStruct",)
 
 
 class BaseStruct(Struct):
-    """Base class for bitongue data structures.
+    """Base structure for data schemas.
 
-    Subclasses declare fields as msgspec ``Struct`` attributes and inherit
-    dictionary and JSON serialization with sorted keys, so equal structures
-    always produce identical JSON.
+    Wraps msgspec's ``Struct`` with round-trip helpers across dicts and
+    the JSON/TOML/YAML text formats. Serialization is stable: encoding
+    with sorted keys means equal structures always produce identical
+    payloads.
     """
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert the structure into a plain dictionary.
+    def to_dict(
+        self,
+        includes: set[str] | None = None,
+        excludes: set[str] | None = None,
+        exclude_none: bool = False,
+    ) -> dict[str, Any]:
+        """Convert to a dict of built-in values.
 
-        Nested structures are converted recursively, so the result contains
-        only built-in types and is safe to pass to ``json.dumps`` or store.
+        Args:
+            includes: Keep only these field names.
+            excludes: Drop these field names.
+            exclude_none: Also drop fields whose value is ``None``.
+
+        Returns:
+            Field name to built-in value mapping. Content is
+            deterministic, but key order is not — use :meth:`to_jsonb`
+            when a stable representation matters.
         """
 
-        return cast("dict[str, Any]", to_builtins(self))
+        kvs = cast("dict[str, Any]", to_builtins(self))
+        fields = set(kvs.keys())
+
+        if includes:
+            fields &= includes
+
+        if excludes:
+            fields -= excludes
+
+        if exclude_none:
+            fields = {f for f in fields if kvs[f] is not None}
+
+        return {f: kvs[f] for f in fields}
+
+    def to_jsonb(
+        self,
+        includes: set[str] | None = None,
+        excludes: set[str] | None = None,
+        exclude_none: bool = False,
+    ) -> bytes:
+        """Encode to JSON bytes with sorted keys.
+
+        Equal structures produce identical bytes, which makes the
+        output suitable for hashing and equality comparison.
+
+        Args:
+            includes: Field names to keep, as in :meth:`to_dict`.
+            excludes: Field names to drop, as in :meth:`to_dict`.
+            exclude_none: Drop ``None``-valued fields.
+        """
+
+        return json.encode(
+            self.to_dict(
+                includes=includes,
+                excludes=excludes,
+                exclude_none=exclude_none,
+            ),
+            order="sorted",
+        )
+
+    def to_json(
+        self,
+        includes: set[str] | None = None,
+        excludes: set[str] | None = None,
+        exclude_none: bool = False,
+    ) -> str:
+        """Encode to a JSON string, as :meth:`to_jsonb` but text.
+
+        Args:
+            includes: Field names to keep, as in :meth:`to_dict`.
+            excludes: Field names to drop, as in :meth:`to_dict`.
+            exclude_none: Drop ``None``-valued fields.
+        """
+
+        return self.to_jsonb(
+            includes=includes,
+            excludes=excludes,
+            exclude_none=exclude_none,
+        ).decode("utf-8")
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        """Build an instance of the structure from a plain dictionary.
+    def from_dict(cls, obj: dict[str, Any]) -> Self:
+        """Build an instance from a mapping of built-in values."""
 
-        Raises:
-            ConversionError: If ``data`` does not match the structure's
-                fields, for example a missing required field or an
-                incompatible value type. The original conversion error is
-                attached as ``__cause__``.
-        """
-
-        try:
-            return convert(data, type=cls)
-
-        except Exception as exc:
-            raise ConversionError(
-                f"Failed to convert data structure: {exc}",
-            ) from exc
-
-    def to_json(self) -> str:
-        """Serialize the structure into a JSON string with sorted keys.
-
-        Sorting keys makes the output deterministic, so two equal structures
-        serialize to identical strings.
-
-        Raises:
-            SerializationError: If the structure cannot be encoded as JSON.
-                The original encoding error is attached as ``__cause__``.
-        """
-
-        try:
-            return json.encode(
-                self,
-                order="sorted",
-            ).decode("utf-8")
-
-        except Exception as exc:
-            raise SerializationError(
-                f"Failed to serialize data structure: {exc}",
-            ) from exc
+        return convert(obj, type=cls)
 
     @classmethod
-    def from_json(cls, json_str: str) -> Self:
-        """Build an instance of the structure from a JSON string.
+    def from_jsonb(cls, obj: bytes, strict: bool = True) -> Self:
+        """Decode an instance from JSON bytes.
 
-        Raises:
-            DeserializationError: If ``json_str`` is not valid JSON or does
-                not match the structure's fields. The original decoding
-                error is attached as ``__cause__``.
+        Args:
+            obj: JSON bytes matching the structure layout.
+            strict: When true, unknown keys are rejected instead of
+                ignored.
         """
 
-        try:
-            return json.decode(json_str, type=cls)
+        return json.decode(obj.decode("utf-8"), type=cls, strict=strict)
 
-        except Exception as exc:
-            raise DeserializationError(
-                f"Failed to deserialize data structure: {exc}",
-            ) from exc
+    @classmethod
+    def from_json(cls, obj: str, strict: bool = True) -> Self:
+        """Decode an instance from a JSON string.
 
-    def __repr__(self) -> str:
-        """Return the sorted-key JSON representation of the structure."""
+        Args:
+            obj: JSON text matching the structure layout.
+            strict: When true, unknown keys are rejected instead of
+                ignored.
+        """
 
-        return self.to_json()
+        return json.decode(obj, type=cls, strict=strict)
+
+    @classmethod
+    def from_toml(cls, obj: str, strict: bool = True) -> Self:
+        """Decode an instance from TOML text.
+
+        Args:
+            obj: TOML text matching the structure layout.
+            strict: When true, unknown keys are rejected instead of
+                ignored.
+        """
+
+        return toml.decode(obj, type=cls, strict=strict)
+
+    @classmethod
+    def from_yaml(cls, obj: str, strict: bool = True) -> Self:
+        """Decode an instance from YAML text.
+
+        Args:
+            obj: YAML text matching the structure layout.
+            strict: When true, unknown keys are rejected instead of
+                ignored.
+        """
+
+        return yaml.decode(obj, type=cls, strict=strict)

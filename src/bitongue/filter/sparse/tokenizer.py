@@ -1,8 +1,10 @@
+"""Jieba-backed search-mode tokenizer."""
+
 from typing import cast
 
 import jieba  # type: ignore[import-untyped]
 
-from bitongue.filter.utils.normalizer import Normalizer
+from bitongue.filter.utils import Normalizer
 
 __all__ = ("JiebaTokenizer",)
 

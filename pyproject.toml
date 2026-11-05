@@ -21,11 +21,6 @@ sparse = [
     "jieba",
     "qdrant-client",
 ]
-neuro = [
-    "autogen-agentchat",
-    "autogen-core",
-    "autogen-ext[openai]",
-]
 
 [project.urls]
 Homepage = "https://ahsen17.github.io/bitongue"

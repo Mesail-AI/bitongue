@@ -1,12 +1,19 @@
+"""Client configuration."""
+
 from bitongue.base import BaseStruct
 
 __all__ = ("BitongueConfig",)
 
 
 class BitongueConfig(BaseStruct):
-    """Bitongue configuration class."""
+    """Runtime knobs for the :class:`Bitongue` orchestrator.
 
-    flowing_size: int
-    flowing_timeout: int | None
+    Attributes:
+        buffer_size: Capacity of the underlying flow window; a full
+            buffer blocks producers (natural backpressure).
+        event_timeout: Expiry window applied to every event, enforced
+            at consumption time; ``None`` means events never expire.
+    """
 
-    handle_timeout: float
+    buffer_size: int
+    event_timeout: float | None = None

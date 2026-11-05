@@ -1,3 +1,5 @@
+"""Local Chinese BM25 sparse embedding on top of fastembed."""
+
 import os
 import re
 from collections import defaultdict
@@ -118,6 +120,7 @@ class Bm25CN(SparseTextEmbeddingBase):
 
     @classmethod
     def _load_stopwords(cls, filepath: "Path | None") -> list[str]:
+        """Load normalized stopwords from a file, one entry per line."""
 
         if filepath is None:
             return []
@@ -206,6 +209,15 @@ class Bm25CN(SparseTextEmbeddingBase):
         )
 
     def _stem(self, tokens: list[str]) -> list[str]:
+        """Apply the punctuation, stopword, length, and stemming rules.
+
+        Args:
+            tokens: Raw tokens to filter and stem.
+
+        Returns:
+            Surviving tokens, lowercased and stemmed where a stemmer is
+            configured.
+        """
 
         stemmed_tokens: list[str] = []
 
@@ -314,6 +326,8 @@ class Bm25CN(SparseTextEmbeddingBase):
 
     @classmethod
     def compute_token_id(cls, token: str) -> int:
+        """Map a token to its stable sparse-vector dimension id."""
+
         return abs(mmh3.hash(token))
 
     def query_embed(
@@ -355,6 +369,8 @@ class Bm25CN(SparseTextEmbeddingBase):
 
 
 class Bm25CNWorker(Worker):
+    """Parallel-pool worker embedding batches with a private model."""
+
     def __init__(self, **kwargs: Any) -> None:
 
         self.model = self.init_embedding(**kwargs)
@@ -375,5 +391,6 @@ class Bm25CNWorker(Worker):
 
     @staticmethod
     def init_embedding(**kwargs: Any) -> "Bm25CN":
+        """Instantiate a :class:`Bm25CN` from pooled keyword args."""
 
         return Bm25CN(**kwargs)
