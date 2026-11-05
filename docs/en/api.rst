@@ -7,16 +7,10 @@ bitongue.base.schemas
 .. automodule:: bitongue.base.schemas
    :members:
 
-bitongue.base.exceptions
-------------------------
+bitongue.flow.events
+--------------------
 
-.. automodule:: bitongue.base.exceptions
-   :members:
-
-bitongue.flow.message
----------------------
-
-.. automodule:: bitongue.flow.message
+.. automodule:: bitongue.flow.events
    :members:
 
 bitongue.flow.flowing
@@ -25,22 +19,22 @@ bitongue.flow.flowing
 .. automodule:: bitongue.flow.flowing
    :members:
 
-bitongue.flow.exceptions
-------------------------
-
-.. automodule:: bitongue.flow.exceptions
-   :members:
-
 bitongue.filter.protocols
 -------------------------
 
 .. automodule:: bitongue.filter.protocols
    :members:
 
-bitongue.filter.keywords
-------------------------
+bitongue.filter.utils
+---------------------
 
-.. automodule:: bitongue.filter.keywords
+.. automodule:: bitongue.filter.utils
+   :members:
+
+bitongue.filter.keyword.filter
+------------------------------
+
+.. automodule:: bitongue.filter.keyword.filter
    :members:
 
 bitongue.filter.sparse.bm25
@@ -74,42 +68,6 @@ bitongue.filter.sparse.tokenizer
 .. automodule:: bitongue.filter.sparse.tokenizer
    :members:
 
-bitongue.filter.neuro.filter
-----------------------------
-
-.. automodule:: bitongue.filter.neuro.filter
-   :members:
-
-bitongue.filter.neuro.policy
-----------------------------
-
-.. automodule:: bitongue.filter.neuro.policy
-   :members:
-
-bitongue.filter.neuro.provider
-------------------------------
-
-.. automodule:: bitongue.filter.neuro.provider
-   :members:
-
-bitongue.filter.utils.normalizer
---------------------------------
-
-.. automodule:: bitongue.filter.utils.normalizer
-   :members:
-
-bitongue.handler.protocols
---------------------------
-
-.. automodule:: bitongue.handler.protocols
-   :members:
-
-bitongue.handler.result
------------------------
-
-.. automodule:: bitongue.handler.result
-   :members:
-
 bitongue.client.config
 ----------------------
 
@@ -120,10 +78,4 @@ bitongue.client.client
 ----------------------
 
 .. automodule:: bitongue.client.client
-   :members:
-
-bitongue.client.exceptions
---------------------------
-
-.. automodule:: bitongue.client.exceptions
    :members:

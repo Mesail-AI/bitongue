@@ -49,7 +49,7 @@ make check      # lint + 类型检查 + 全部测试
   不使用 dataclass 或 pydantic；
 - 异步只使用 anyio 原语（`create_memory_object_stream`、`fail_after` 等），
   不直接 import asyncio；
-- 泛型使用 PEP 695 语法（`class Flowing[T: BaseMessage]`）；
+- 泛型使用 PEP 695 语法（`class Flowing[T: Event]`）；
 - 子包内文件分工固定：`schemas.py`（数据结构）、`protocols.py`（接口 Protocol）、
   `exceptions.py`（异常，均继承 `BitongueError`）；`__init__.py` 显式声明
   `__all__` 再导出；

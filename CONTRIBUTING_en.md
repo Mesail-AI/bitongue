@@ -45,7 +45,7 @@ Common commands:
 
 - Every data structure inherits from `bitongue.base.BaseStruct` (a msgspec `Struct` wrapper); do not use dataclasses or pydantic;
 - Asynchronous code uses anyio primitives only (`create_memory_object_stream`, `fail_after`, etc.); never import asyncio directly;
-- Generics use PEP 695 syntax (`class Flowing[T: BaseMessage]`);
+- Generics use PEP 695 syntax (`class Flowing[T: Event]`);
 - Subpackage files have fixed roles: `schemas.py` (data structures), `protocols.py` (interface Protocols), `exceptions.py` (exceptions, all inheriting `BitongueError`); each `__init__.py` re-exports with an explicit `__all__`;
 - Code style is enforced by ruff: line length 90, Google-style docstring convention, rule groups in `pyproject.toml` under `[tool.ruff.lint]`;
 - Type checking runs both mypy strict and pyright; both must pass.

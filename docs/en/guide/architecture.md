@@ -1,87 +1,73 @@
 # Architecture and data flow
 
-This page explains Bitongue from two angles: the static structure and the runtime behavior.
+This page explains how Bitongue is organized, from the static structure and the runtime in turn.
 
 ## Subpackage structure
 
-The library is organized into five subpackages with bottom-up dependencies: `base` depends on nothing internal, and `client` orchestrates all the others:
+The library splits into four subpackages with bottom-up dependencies: `base` depends on nothing internal, and `client` orchestrates all the rest:
 
 ```{mermaid}
 graph BT
-    base["base<br/>BaseStruct · exception hierarchy"]
-    flow["flow<br/>Flowing · BaseMessage · MessageEntry"]
-    filter["filter<br/>BaseFilter · KeywordsFilter · SparseTextualFilter · NeuroTextualFilter"]
-    handler["handler<br/>BaseHandler · BaseResult"]
+    base["base<br/>BaseStruct"]
+    flow["flow<br/>Flowing · Event · EventEntry"]
+    filter["filter<br/>Filter · KeywordFilter · SparseTextFilter"]
     client["client<br/>Bitongue · BitongueConfig"]
 
     flow --> base
     filter --> flow
-    handler --> base
     client --> flow
-    client --> handler
     client --> filter
 ```
 
 | Subpackage | Responsibility | Main public objects |
 |-|-|-|
-| `base` | Data-structure foundation and exception root | `BaseStruct`, `BitongueError` and its subclasses |
-| `flow` | In-memory flowing window: buffering, timing, expiry removal | `Flowing`, `BaseMessage`, `MessageEntry` |
-| `filter` | Message admission gate: Protocol and built-in filters | `BaseFilter`, `KeywordsFilter`, `SparseTextualFilter`, `NeuroTextualFilter` |
-| `handler` | Business handling extension point (Protocol) and result base | `BaseHandler`, `BaseResult` |
-| `client` | Lifecycle orchestration and both production/consumption ends | `Bitongue`, `BitongueConfig` |
+| `base` | Data-structure foundation | `BaseStruct` |
+| `flow` | In-memory flowing window: buffering, timing, expiry removal | `Flowing`, `Event`, `TextEvent`, `EventEntry` |
+| `filter` | Event admission: Protocols and built-in filters | `Filter`, `FilterLifecycle`, `Normalizer`; subpackages `filter.keyword` (`KeywordFilter`), `filter.sparse` (`SparseTextFilter` etc.) |
+| `client` | Lifecycle orchestration and both ends of the pipeline | `Bitongue`, `BitongueConfig` |
 
-## The life of a message
+## The life of an event
 
-From send to result, a message passes through these stages:
+From send to consumption, an event passes through the following stages:
 
 ```{mermaid}
 sequenceDiagram
     participant P as Producer
     participant B as Bitongue
     participant F as Flowing window
-    participant C as Consumer result()
+    participant C as Consumer receive()
     participant FC as Filter chain
-    participant H as Handler
 
-    P->>B: send(message)
-    B->>F: draw() wraps it into a MessageEntry (records enter_time and timeout)
+    P->>B: send(event)
+    B->>F: send() wraps into EventEntry (records enter_time and timeout)
     F->>F: bounded buffer (sender waits when full)
-    C->>F: flow() draws entries in order
-    F-->>C: entries past their lifetime are dropped as expired
-    C->>FC: calls filter(message) concurrently in a task group
-    FC-->>C: all passed? otherwise the message is dropped silently
-    C->>H: handle(message) (bounded by handle_timeout)
-    alt handling succeeds
-        H-->>C: returns result R
-        C-->>P: yields the result
-    else the handler raises
-        H--x C: exception (wrapped as MessageHandleError)
-        C-->>P: yields a MessageHandleFailure envelope (stream continues)
-    end
+    C->>F: receive() draws in order
+    F-->>C: drops entries past their lifetime
+    C->>FC: task group calls filter(event) concurrently
+    FC-->>C: all pass? any match drops the event silently
+    C-->>P: yield events that passed
 ```
 
-The key points, mapped to the code:
+A few key points tied to the code:
 
 - **The clock starts at entry**: `send()` records `enter_time` immediately, so time spent waiting in the buffer counts against the lifetime.
-- **Expiry is enforced on the consumer side**: an expired entry is discovered and skipped when drawn — nothing is produced, nothing raises.
-- **The filter chain runs concurrently and does not short-circuit**: the filters start together inside one task group and all of them run; a single rejection drops the message.
-- **Handling timeouts are local**: `handle_timeout` covers both the filtering and handling phases of one message; a timeout only affects that message (it is skipped), and the generator keeps consuming.
-- **Handling exceptions become failure envelopes**: exceptions raised by the handler are wrapped as `MessageHandleError` and emitted in order as `MessageHandleFailure` envelopes (carrying the source message and the error text) — a single message's failure does not terminate the result stream, and consumers tell results and envelopes apart with `isinstance`.
-- **Filter exceptions are combined and raised**: exceptions raised by filters are collected once every filter has finished, combined into one `ExceptionGroup`, and raised, terminating the result stream — admission is pipeline-level infrastructure, and once it breaks no further message can be decided; concurrent sibling exceptions are never swallowed, and a loud failure beats in-band reporting.
-- **Filter lifecycles can move up to the orchestrator**: filters implementing `FilterLifecycle` (`start()`/`aclose()`) are started and closed by `Bitongue.start()/shutdown()` — for `SparseTextualFilter` this means collection creation and connection management, for `NeuroTextualFilter` building the agent and the model client, with the one-time cost landing on orchestrator startup instead of the first message.
+- **Expiry is enforced on the consumer side**: an entry is only discovered expired when drawn; it is skipped — never yielded, never an error.
+- **The filter chain is concurrent and non-short-circuiting**: filters start together in one task group and all execute; a single matching verdict drops the event.
+- **Filter exceptions surface as one group**: the orchestrator waits for every filter to finish, merges all exceptions into a single `ExceptionGroup` and raises it, terminating the event stream — admission is a pipeline-level facility, and when it breaks no further event can be judged; concurrent sibling exceptions never swallow each other, and failing loudly beats in-band reporting.
+- **Filter lifecycles roll up into the orchestrator**: filters implementing `FilterLifecycle` (`start()`/`close()`) are started and stopped by `Bitongue.start()/close()` (closing in reverse registration order) — for example `SparseTextFilter`'s collection creation and connection management, whose initialization cost lands at orchestrator startup rather than on the first event.
 
 ## Concurrency model
 
-- All async primitives come from anyio, so the library runs on asyncio as well as trio;
-- The flowing window is a bounded memory stream: a full buffer makes `send()` wait (backpressure), an empty one makes `result()` wait;
-- `result()`'s underlying stream is single-consumer; exactly one task should iterate it at a time; messages are filtered and handled strictly one at a time — there is no concurrent handling;
-- The filter chain uses aioresult to run its filters concurrently inside a task group and combines their verdicts once all complete; exceptions raised by any filter are combined into one `ExceptionGroup` and raised as-is;
-- `handle_timeout` is implemented with an anyio cancel scope, so a timeout actually cancels the work inside filtering and handling rather than merely abandoning the wait.
+- Every async primitive comes from anyio, so the library runs on both asyncio and trio;
+- The flowing window is a bounded memory stream: `send()` waits when the buffer is full (backpressure), and `receive()` waits while it is empty;
+- `receive()` sits on a single-consumer stream — exactly one task should iterate it at a time; events are consumed serially one by one, with no concurrent consumption;
+- The filter chain runs its filters concurrently inside a task group via aioresult, and aggregates the verdicts once all of them finish; any filter exception is merged into one `ExceptionGroup` and re-raised as-is.
 
 ## Design trade-offs
 
-- **msgspec instead of dataclass/pydantic**: messages and results need high-frequency serialization; `BaseStruct` provides one consistent surface with sorted-key JSON and typed conversion.
-- **Protocols instead of inheritance**: filters and handlers only need "a method with the right signature"; business classes do not inherit any framework base class.
-- **Lifecycle centralized in the orchestrator**: `Flowing` can be used standalone, but starting/stopping, timeout configuration, and filter/handler orchestration all converge in `Bitongue` so users cannot assemble the pieces incorrectly.
+- **msgspec over dataclass/pydantic**: events serialize at high frequency, and `BaseStruct` uniformly provides immutable defaults, sorted-key JSON, and type conversion.
+- **Protocols over inheritance**: a filter only needs "one method with the right signature"; business classes inherit nothing from the framework. Events do subclass `Event` to gain identity and serialization.
+- **Business logic stays on the consumer side**: the library owns flow only (buffering, lifetime, filtering); the handling logic lives freely in the consumer's `receive()` loop, so neither constrains the other.
+- **Centralized lifecycle in the orchestrator**: `Flowing` works standalone, but `start/close`, timeout configuration, and filter orchestration converge in `Bitongue` so users cannot assemble them wrong.
 
-For the concrete semantics of each configuration field, see [Configuration](configuration.md).
+For the concrete semantics of each configuration knob, see [Configuration](configuration.md).
