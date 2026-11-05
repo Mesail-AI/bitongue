@@ -1,4 +1,4 @@
-"""Tests for bitongue.filter.utils.normalizer."""
+"""Tests for bitongue.filter.utils."""
 
 import pytest
 
