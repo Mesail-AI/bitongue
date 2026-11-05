@@ -1,7 +1,7 @@
 [project]
 name = "bitongue"
-version = "0.1.2"
-description = "Bitongue - A message flowing noting library."
+version = "0.1.3"
+description = "Bitongue - An asynchronous event flowing library."
 readme = "README.md"
 authors = [
     { name = "Ahsen17", email = "mesailedward@qq.com" }
@@ -20,11 +20,6 @@ sparse = [
     "fastembed",
     "jieba",
     "qdrant-client",
-]
-neuro = [
-    "autogen-agentchat",
-    "autogen-core",
-    "autogen-ext[openai]",
 ]
 
 [project.urls]

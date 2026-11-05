@@ -2,160 +2,140 @@
 
 import anyio
 import pytest
-from tests.client.conftest import (
-    CollectResults,
-    EchoResult,
-    MakeClient,
-    MakeFilter,
-    MakeHandler,
-)
-from tests.conftest import MakeMessage, WaitUntil
+from tests.client.conftest import CollectEvents, MakeClient, MakeFilter
+from tests.conftest import MakeEvent, TextualEvent, WaitUntil
 
-from bitongue.flow import TextualMessage
-from bitongue.handler import MessageHandleFailure
+from bitongue.flow import Event
 
 
 class TestFilterChain:
-    """审计 A1 回归:任一过滤器拒绝的消息不得到达 handler。"""
+    """审计 A1 回归:任一过滤器拒绝的事件不得被产出;链不短路,全部执行。"""
 
-    async def test_rejected_message_never_reaches_handler(
+    async def test_rejected_event_never_yielded(
         self,
         make_client: MakeClient,
-        make_handler: MakeHandler,
         make_filter: MakeFilter,
-        make_message: MakeMessage,
+        make_event: MakeEvent,
         wait_until: WaitUntil,
     ) -> None:
-        reject_all = make_filter(False)
-        permit_all = make_filter(True)
-        handler = make_handler()
-        client = make_client(handler=handler, filters=[reject_all, permit_all])
+        reject_all = make_filter(True)
+        pass_all = make_filter(False)
+        client = make_client(reject_all, pass_all)
         await client.start()
-        await client.send(make_message("m1"))
+        await client.send(make_event("m1"))
 
         async with anyio.create_task_group() as tg:
 
             async def drain() -> None:
-                async for _ in client.result():
-                    pass  # 被拒消息不产生结果
+                async for _ in client.receive():
+                    pass  # 被拒事件不产出
 
             tg.start_soon(drain)
             await wait_until(lambda: len(reject_all.seen) == 1)
             tg.cancel_scope.cancel()
 
-        await client.shutdown()
-        assert permit_all.seen  # 现状:过滤器链不短路,全部执行
-        assert handler.seen == []
+        await client.close()
+        assert pass_all.seen  # 现状:过滤器链不短路,全部执行
+        assert reject_all.verdict is True
 
-    async def test_all_messages_rejected_when_any_filter_rejects(
+    async def test_all_events_rejected_when_any_filter_rejects(
         self,
         make_client: MakeClient,
-        make_handler: MakeHandler,
         make_filter: MakeFilter,
-        make_message: MakeMessage,
+        make_event: MakeEvent,
         wait_until: WaitUntil,
     ) -> None:
-        reject_all = make_filter(False)
-        handler = make_handler()
-        client = make_client(handler=handler, filters=[reject_all])
+        reject_all = make_filter(True)
+        client = make_client(reject_all)
         await client.start()
-        await client.send(make_message("m1"))
-        await client.send(make_message("m2"))
+        await client.send(make_event("m1"))
+        await client.send(make_event("m2"))
 
         async with anyio.create_task_group() as tg:
 
             async def drain() -> None:
-                async for _ in client.result():
-                    pass  # 被拒消息不产生结果
+                async for _ in client.receive():
+                    pass  # 被拒事件不产出
 
             tg.start_soon(drain)
             await wait_until(lambda: len(reject_all.seen) == 2)
             tg.cancel_scope.cancel()
 
-        await client.shutdown()
-        assert handler.seen == []
+        await client.close()
 
-    async def test_accepted_message_reaches_handler(
+    async def test_accepted_events_yielded_in_order(
         self,
         make_client: MakeClient,
-        make_handler: MakeHandler,
         make_filter: MakeFilter,
-        make_message: MakeMessage,
-        collect_results: CollectResults,
+        make_event: MakeEvent,
+        collect_events: CollectEvents,
     ) -> None:
-        permit_all = make_filter(True)
-        handler = make_handler()
-        client = make_client(handler=handler, filters=[permit_all])
+        pass_all = make_filter(False)
+        client = make_client(pass_all)
         await client.start()
-        message = make_message("pass")
-        await client.send(message)
+        first = make_event("m1")
+        second = make_event("m2")
+        await client.send(first)
+        await client.send(second)
 
-        results = await collect_results(client, count=1)
+        events = await collect_events(client, count=2)
 
-        await client.shutdown()
-        assert [item.content for item in results] == ["pass"]
-        assert handler.seen == [message]
+        await client.close()
+        assert events == [first, second]
 
-    async def test_without_filters_every_message_reaches_handler(
+    async def test_without_filters_every_event_yielded(
         self,
         make_client: MakeClient,
-        make_handler: MakeHandler,
-        make_message: MakeMessage,
-        collect_results: CollectResults,
+        make_event: MakeEvent,
+        collect_events: CollectEvents,
     ) -> None:
-        handler = make_handler()
-        client = make_client(handler=handler)
+        client = make_client()
         await client.start()
-        await client.send(make_message("m1"))
-        await client.send(make_message("m2"))
+        await client.send(make_event("m1"))
+        await client.send(make_event("m2"))
 
-        results = await collect_results(client, count=2)
+        events = await collect_events(client, count=2)
 
-        await client.shutdown()
-        assert [item.content for item in results] == ["m1", "m2"]
+        await client.close()
+        assert [item.text for item in events] == ["m1", "m2"]
 
     async def test_filter_exceptions_raise_one_group_and_terminate_stream(
         self,
         make_client: MakeClient,
-        make_handler: MakeHandler,
-        make_message: MakeMessage,
+        make_event: MakeEvent,
     ) -> None:
         # 准入是管道级设施:filter 异常汇总为异常组上抛并终止流,
-        # 而非转为消息级信封继续流动;并发的兄弟异常互不吞没。
+        # 而非转为事件级信封继续流动;并发的兄弟异常互不吞没。
         class BrokenFilter:
             """Filter that always raises the given error."""
 
             def __init__(self, error: Exception) -> None:
                 self._error = error
-                self.seen: list[TextualMessage] = []
+                self.seen: list[TextualEvent] = []
 
-            async def filter(self, message: TextualMessage) -> bool:
-                self.seen.append(message)
+            async def filter(self, event: TextualEvent) -> bool:
+                self.seen.append(event)
                 raise self._error
 
-        handler = make_handler()
         client = make_client(
-            handler=handler,
-            filters=[
-                BrokenFilter(RuntimeError("admission is down")),
-                BrokenFilter(ValueError("verdict backend crashed")),
-            ],
+            BrokenFilter(RuntimeError("admission is down")),
+            BrokenFilter(ValueError("verdict backend crashed")),
         )
         await client.start()
-        await client.send(make_message("m1"))
-        await client.send(make_message("m2"))
+        await client.send(make_event("m1"))
+        await client.send(make_event("m2"))
 
-        consumed: list[EchoResult | MessageHandleFailure[TextualMessage]] = []
+        consumed: list[Event] = []
         with pytest.raises(ExceptionGroup) as excinfo:
-            async for item in client.result():
+            async for item in client.receive():
                 consumed.append(item)  # noqa: PERF401 -- 流应在此处终止
 
-        assert consumed == []  # 流在第一条消息处终止,消息不转为信封继续流动
+        assert consumed == []  # 流在第一条事件处终止,事件不转为信封继续流动
         assert {type(exc) for exc in excinfo.value.exceptions} == {
             RuntimeError,
             ValueError,
         }  # 两个并发失败的 filter 异常都被保留
-        await client.shutdown()
+        await client.close()
 
 
 class TestConcurrentFilters:
@@ -164,188 +144,109 @@ class TestConcurrentFilters:
     async def test_filters_run_concurrently(
         self,
         make_client: MakeClient,
-        make_handler: MakeHandler,
-        make_message: MakeMessage,
-        collect_results: CollectResults,
+        make_event: MakeEvent,
     ) -> None:
         # The first filter blocks until the second one has been entered.
-        # Sequential execution would deadlock into the handle timeout and
-        # drop the message; concurrent execution lets both complete.
+        # Sequential execution would deadlock forever; concurrent execution
+        # lets both complete and the event flow.
         release_first = anyio.Event()
 
         class BlockingFilter:
             """Filter that waits until its companion has started."""
 
             def __init__(self) -> None:
-                self.seen: list[TextualMessage] = []
+                self.seen: list[TextualEvent] = []
 
-            async def filter(self, message: TextualMessage) -> bool:
-                self.seen.append(message)
+            async def filter(self, event: TextualEvent) -> bool:
+                self.seen.append(event)
                 with anyio.fail_after(2):
                     await release_first.wait()
 
-                return True
+                return False
 
         class ReleasingFilter:
             """Companion filter that unblocks the waiting one."""
 
             def __init__(self) -> None:
-                self.seen: list[TextualMessage] = []
+                self.seen: list[TextualEvent] = []
 
-            async def filter(self, message: TextualMessage) -> bool:
-                self.seen.append(message)
+            async def filter(self, event: TextualEvent) -> bool:
+                self.seen.append(event)
                 release_first.set()
 
-                return True
+                return False
 
         blocking = BlockingFilter()
         releasing = ReleasingFilter()
-        handler = make_handler()
-        client = make_client(handler=handler, filters=[blocking, releasing])
+        client = make_client(blocking, releasing)
         await client.start()
-        await client.send(make_message("concurrent"))
+        await client.send(make_event("concurrent"))
 
-        results = await collect_results(client, count=1)
+        # Both filters must see the event; receiving it proves no deadlock.
+        async with anyio.create_task_group() as tg:
 
-        await client.shutdown()
-        assert [item.content for item in results] == ["concurrent"]
+            async def drain() -> None:
+                async for _ in client.receive():
+                    pass
+
+            tg.start_soon(drain)
+            with anyio.fail_after(5):
+                while len(blocking.seen) < 1 or len(releasing.seen) < 1:
+                    await anyio.sleep(0.01)
+            tg.cancel_scope.cancel()
+
+        await client.close()
         assert len(blocking.seen) == 1
         assert len(releasing.seen) == 1
 
 
-class TestHandleTimeout:
-    """审计 A3 回归:超时跳过消息但不断流;慢消费者不被误取消。"""
+class TestEventTimeout:
+    """过期事件在消费侧被静默剔除,流不断(超时作用于 flow 层)。"""
 
-    async def test_timeout_skips_message_and_keeps_stream_alive(
+    async def test_expired_event_skipped_and_stream_stays_alive(
         self,
         make_client: MakeClient,
-        make_handler: MakeHandler,
-        make_message: MakeMessage,
-        collect_results: CollectResults,
+        make_event: MakeEvent,
+        collect_events: CollectEvents,
     ) -> None:
-        handler = make_handler(delays=[0.3, 0.0])
-        client = make_client(handler=handler, handle_timeout=0.1)
+        client = make_client(event_timeout=0.1)
         await client.start()
-        await client.send(make_message("slow"))
-        await client.send(make_message("fast"))
+        stale = make_event("stale")
+        await client.send(stale)
+        await anyio.sleep(0.2)  # 让第一条事件过期
+        fresh = make_event("fresh")
+        await client.send(fresh)
 
-        results = await collect_results(client, count=1)
+        events = await collect_events(client, count=1)
 
-        await client.shutdown()
-        assert [item.content for item in results] == ["fast"]
-        assert len(handler.seen) == 2  # 慢消息进入了 handle,但被超时剔除
-
-    async def test_slow_consumer_is_not_cancelled_between_results(
-        self,
-        make_client: MakeClient,
-        make_handler: MakeHandler,
-        make_message: MakeMessage,
-        wait_until: WaitUntil,
-    ) -> None:
-        # 修复前:超时作用域跨越 yield,消费者在两次取结果之间的耗时计入
-        # handle_timeout,导致消费者任务被误取消。本用例钉住修复后的行为。
-        handler = make_handler()
-        client = make_client(handler=handler, handle_timeout=0.1)
-        await client.start()
-        for i in range(3):
-            await client.send(make_message(f"m{i}"))
-
-        results: list[EchoResult] = []
-        with anyio.fail_after(5):
-            async with anyio.create_task_group() as tg:
-
-                async def drain() -> None:
-                    async for item in client.result():
-                        if isinstance(item, MessageHandleFailure):
-                            continue
-                        results.append(item)
-                        await anyio.sleep(0.3)  # 每条结果取用耗时 > handle_timeout
-
-                tg.start_soon(drain)
-                await wait_until(lambda: len(results) == 3)
-                tg.cancel_scope.cancel()
-
-        assert [item.content for item in results] == ["m0", "m1", "m2"]
-        await client.shutdown()
-
-
-class TestHandlerError:
-    """handler 异常转为 MessageHandleFailure 信封按序产出,结果流不终止。"""
-
-    async def test_handler_error_yields_failure_envelope_and_stream_continues(
-        self,
-        make_client: MakeClient,
-        make_message: MakeMessage,
-        wait_until: WaitUntil,
-    ) -> None:
-        class FailOnceHandler:
-            """Handler that fails the first call and succeeds afterwards."""
-
-            def __init__(self) -> None:
-                self.seen: list[TextualMessage] = []
-
-            async def handle(self, message: TextualMessage) -> EchoResult:
-                self.seen.append(message)
-                if len(self.seen) == 1:
-                    raise ValueError("boom")
-
-                return EchoResult(id=message.id, content=message.text or "")
-
-        handler = FailOnceHandler()
-        client = make_client(handler=handler)
-        await client.start()
-        first = make_message("m1")
-        second = make_message("m2")
-        await client.send(first)
-        await client.send(second)
-
-        emitted: list[EchoResult | MessageHandleFailure[TextualMessage]] = []
-        with anyio.fail_after(5):
-            async with anyio.create_task_group() as tg:
-
-                async def drain() -> None:
-                    async for item in client.result():
-                        emitted.append(item)  # noqa: PERF401 -- 消费须可随时取消
-
-                tg.start_soon(drain)
-                await wait_until(lambda: len(emitted) == 2)
-                tg.cancel_scope.cancel()
-
-        await client.shutdown()
-        failure = emitted[0]
-        outcome = emitted[1]
-        assert isinstance(failure, MessageHandleFailure)
-        assert isinstance(outcome, EchoResult)
-        assert failure.message is first  # 信封携带来源消息
-        assert "boom" in failure.error  # 错误文本保留原始异常信息
-        assert outcome.content == "m2"  # 流未终止,第二条消息正常产出
-        assert handler.seen == [first, second]  # 两条消息都进入了 handle
+        await client.close()
+        assert [item.text for item in events] == ["fresh"]
 
 
 class TestClientLifecycle:
-    """start / shutdown / 未初始化守卫。"""
+    """start / close / 未初始化守卫。"""
 
     async def test_send_before_start_raises_runtime_error(
-        self, make_client: MakeClient, make_message: MakeMessage
+        self, make_client: MakeClient, make_event: MakeEvent
     ) -> None:
         client = make_client()
 
         with pytest.raises(RuntimeError, match=r"Run `start` first\."):
-            await client.send(make_message())
+            await client.send(make_event())
 
-    async def test_result_before_start_raises_runtime_error(
+    async def test_receive_before_start_raises_runtime_error(
         self, make_client: MakeClient
     ) -> None:
         client = make_client()
-        gen = client.result()
+        gen = client.receive()
 
         with pytest.raises(RuntimeError, match=r"Run `start` first\."):
             await gen.__anext__()
 
-    async def test_shutdown_without_start_is_noop(self, make_client: MakeClient) -> None:
+    async def test_close_without_start_is_noop(self, make_client: MakeClient) -> None:
         client = make_client()
 
-        await client.shutdown()
+        await client.close()
 
     async def test_running_reflects_lifecycle(self, make_client: MakeClient) -> None:
         # Read the property into a local before asserting: mypy narrows
@@ -361,83 +262,116 @@ class TestClientLifecycle:
         started = client.running
         assert started is True
 
-        await client.shutdown()
+        await client.close()
 
         after = client.running
         assert after is False
 
-    async def test_double_start_preserves_buffered_messages(
+    async def test_double_start_preserves_buffered_events(
         self,
         make_client: MakeClient,
-        make_message: MakeMessage,
-        collect_results: CollectResults,
+        make_event: MakeEvent,
+        collect_events: CollectEvents,
     ) -> None:
         # A redundant start() must be a no-op: recreating the window here
-        # would silently drop the message buffered before the second call.
+        # would silently drop the event buffered before the second call.
         client = make_client()
         await client.start()
-        await client.send(make_message("kept"))
+        await client.send(make_event("kept"))
 
         await client.start()
 
-        results = await collect_results(client, count=1)
+        events = await collect_events(client, count=1)
 
-        await client.shutdown()
-        assert [item.content for item in results] == ["kept"]
+        await client.close()
+        assert [item.text for item in events] == ["kept"]
 
-    async def test_double_start_keeps_client_usable(
+    async def test_restart_after_close_accepts_events(
         self,
         make_client: MakeClient,
-        make_message: MakeMessage,
-        collect_results: CollectResults,
+        make_event: MakeEvent,
+        collect_events: CollectEvents,
     ) -> None:
         client = make_client()
         await client.start()
+        await client.close()
 
         await client.start()
-        await client.send(make_message("m"))
-        results = await collect_results(client, count=1)
+        await client.send(make_event("again"))
+        events = await collect_events(client, count=1)
 
-        await client.shutdown()
-        assert len(results) == 1
+        await client.close()
+        assert [item.text for item in events] == ["again"]
 
-    async def test_restart_after_shutdown_accepts_messages(
-        self,
-        make_client: MakeClient,
-        make_message: MakeMessage,
-        collect_results: CollectResults,
-    ) -> None:
+
+class TestCloseLifecycle:
+    """close 逆序关闭持有资源的过滤器,且只触碰实现了生命周期的过滤器。
+
+    回归:close 一度误调用 filter 的 ``start`` 而非 ``close``。
+    """
+
+    async def test_closes_filters_in_reverse_order(self, make_client: MakeClient) -> None:
+        calls: list[str] = []
+
+        class LifecycleFilter:
+            """Filter double recording lifecycle calls under a tag."""
+
+            def __init__(self, tag: str) -> None:
+                self._tag = tag
+
+            async def start(self) -> None:
+                calls.append(f"start:{self._tag}")
+
+            async def close(self) -> None:
+                calls.append(f"close:{self._tag}")
+
+            async def filter(self, event: TextualEvent) -> bool:
+                return False
+
+        class PlainFilter:
+            """Filter double without any lifecycle methods."""
+
+            async def filter(self, event: TextualEvent) -> bool:
+                return False
+
+        first = LifecycleFilter("a")
+        plain = PlainFilter()
+        last = LifecycleFilter("c")
+        client = make_client(first, plain, last)
+        await client.start()
+        calls.clear()  # 只关心 close 阶段的调用序列
+
+        await client.close()
+
+        assert calls == ["close:c", "close:a"]  # 逆序;plain 未被触碰
+
+    async def test_double_close_is_noop(self, make_client: MakeClient) -> None:
         client = make_client()
         await client.start()
-        await client.shutdown()
 
-        await client.start()
-        await client.send(make_message("again"))
-        results = await collect_results(client, count=1)
-
-        await client.shutdown()
-        assert [item.content for item in results] == ["again"]
+        await client.close()
+        await client.close()
 
 
 class TestConcurrentConsumers:
-    """特征测试(审计 B7 现状):多个 result() 消费者瓜分消息流(各得其一、无重复)。"""
+    """特征测试(审计 B7 现状):多个 receive() 消费者瓜分事件流(各得其一、无重复)。"""
 
-    async def test_consumers_split_messages_without_duplicates(
-        self, make_client: MakeClient, make_message: MakeMessage
+    async def test_consumers_split_events_without_duplicates(
+        self, make_client: MakeClient, make_event: MakeEvent
     ) -> None:
         client = make_client()
         await client.start()
         for text in ("a", "b", "c", "d"):
-            await client.send(make_message(text))
+            await client.send(make_event(text))
 
-        first = client.result()
-        second = client.result()
+        first = client.receive()
+        second = client.receive()
         got_first = [await first.__anext__() for _ in range(2)]
         got_second = [await second.__anext__() for _ in range(2)]
 
         items = [*got_first, *got_second]
-        contents = sorted(item.content for item in items if isinstance(item, EchoResult))
-        assert contents == ["a", "b", "c", "d"]
+        texts = sorted(item.text for item in items)
+        assert texts == ["a", "b", "c", "d"]
         await first.aclose()
         await second.aclose()
-        await client.shutdown()
+        await client.close()

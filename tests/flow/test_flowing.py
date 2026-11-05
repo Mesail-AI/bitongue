@@ -2,84 +2,90 @@
 
 import anyio
 import pytest
-from tests.conftest import MakeMessage, WaitUntil
+from tests.conftest import MakeEvent, TextualEvent, WaitUntil
 
-from bitongue.flow import BaseMessage, Flowing, FlowingNotInitializedError, TextualMessage
+from bitongue.flow import Flowing
 
 
 class TestFlowingLifecycle:
-    """start / shutdown / running and the uninitialized guards."""
+    """start / close / running and the uninitialized guards."""
 
-    async def test_draw_before_start_raises(self, make_message: MakeMessage) -> None:
-        flow = Flowing[BaseMessage](size=1)
+    async def test_send_before_start_raises(self, make_event: MakeEvent) -> None:
+        flow = Flowing[TextualEvent](buffer_size=1)
 
-        with pytest.raises(FlowingNotInitializedError) as excinfo:
-            await flow.draw(make_message())
+        with pytest.raises(RuntimeError, match="Flowing is not running"):
+            await flow.send(make_event())
 
-        assert excinfo.type is FlowingNotInitializedError
+    async def test_receive_before_start_raises_on_first_anext(self) -> None:
+        flow = Flowing[TextualEvent](buffer_size=1)
+        gen = flow.receive()
 
-    async def test_flow_before_start_raises_on_first_anext(self) -> None:
-        flow = Flowing[BaseMessage](size=1)
-        gen = flow.flow()
-
-        with pytest.raises(FlowingNotInitializedError):
+        with pytest.raises(RuntimeError, match="Flowing is not running"):
             await gen.__anext__()
 
-    async def test_start_sets_running_and_allows_draw(
-        self, make_message: MakeMessage
+    async def test_start_sets_running_and_allows_send(
+        self, make_event: MakeEvent
     ) -> None:
-        flow = Flowing[BaseMessage](size=1)
+        flow = Flowing[TextualEvent](buffer_size=1)
 
         await flow.start()
         assert flow.running
-        await flow.draw(make_message())
+        await flow.send(make_event())
 
-        await flow.shutdown()
+        await flow.close()
 
-    async def test_shutdown_clears_running(self, make_message: MakeMessage) -> None:
-        flow = Flowing[BaseMessage](size=1)
+    async def test_close_clears_running(self, make_event: MakeEvent) -> None:
+        flow = Flowing[TextualEvent](buffer_size=1)
         await flow.start()
 
-        await flow.shutdown()
+        await flow.close()
         assert not flow.running
-        with pytest.raises(FlowingNotInitializedError):
-            await flow.draw(make_message())
+        with pytest.raises(RuntimeError, match="Flowing is not running"):
+            await flow.send(make_event())
 
-    async def test_start_is_idempotent(self, make_message: MakeMessage) -> None:
-        flow = Flowing[BaseMessage](size=1)
+    async def test_start_is_idempotent(self, make_event: MakeEvent) -> None:
+        flow = Flowing[TextualEvent](buffer_size=1)
 
         await flow.start()
         await flow.start()
-        await flow.draw(make_message())
+        await flow.send(make_event())
 
-        await flow.shutdown()
+        await flow.close()
+
+    async def test_close_is_idempotent(self, make_event: MakeEvent) -> None:
+        flow = Flowing[TextualEvent](buffer_size=1)
+        await flow.start()
+        await flow.send(make_event())
+
+        await flow.close()
+        await flow.close()
 
 
 class TestFlowingExpiry:
     """Expired entries are dropped; timeout=None never expires (审计 A2 回归)."""
 
-    async def test_none_timeout_delivers_message(
-        self, make_message: MakeMessage, wait_until: WaitUntil
+    async def test_none_timeout_delivers_event(
+        self, make_event: MakeEvent, wait_until: WaitUntil
     ) -> None:
-        flow = Flowing[BaseMessage](size=4, timeout=None)
+        flow = Flowing[TextualEvent](buffer_size=4, timeout=None)
         await flow.start()
-        message = make_message("m")
-        await flow.draw(message)
+        event = make_event("m")
+        await flow.send(event)
 
-        got: list[BaseMessage] = []
+        got: list[TextualEvent] = []
         async with anyio.create_task_group() as tg:
 
             async def drain() -> None:
                 # 逐条 append 而非 extend: 部分结果需即时可见, 供轮询提前终止
-                async for item in flow.flow():
+                async for item in flow.receive():
                     got.append(item)  # noqa: PERF401
 
             tg.start_soon(drain)
             await wait_until(lambda: len(got) == 1)
             tg.cancel_scope.cancel()
 
-        assert got == [message]
-        await flow.shutdown()
+        assert got == [event]
+        await flow.close()
 
     @pytest.mark.parametrize(
         ("advance", "delivered"),
@@ -91,26 +97,26 @@ class TestFlowingExpiry:
         advance: float,
         delivered: bool,
         monkeypatch: pytest.MonkeyPatch,
-        make_message: MakeMessage,
+        make_event: MakeEvent,
         wait_until: WaitUntil,
     ) -> None:
         clock = {"now": 1000.0}
         monkeypatch.setattr("bitongue.flow.flowing.time.time", lambda: clock["now"])
-        flow = Flowing[TextualMessage](size=4, timeout=10)
+        flow = Flowing[TextualEvent](buffer_size=4, timeout=10)
         await flow.start()
-        first = make_message("first")
-        await flow.draw(first)
+        first = make_event("first")
+        await flow.send(first)
         clock["now"] = 1000.0 + advance
-        second = make_message("second")
-        await flow.draw(second)
+        second = make_event("second")
+        await flow.send(second)
 
         expected_count = 2 if delivered else 1
-        got: list[TextualMessage] = []
+        got: list[TextualEvent] = []
         async with anyio.create_task_group() as tg:
 
             async def drain() -> None:
                 # 逐条 append 而非 extend: 部分结果需即时可见, 供轮询提前终止
-                async for item in flow.flow():
+                async for item in flow.receive():
                     got.append(item)  # noqa: PERF401
 
             tg.start_soon(drain)
@@ -121,36 +127,36 @@ class TestFlowingExpiry:
             assert [item.text for item in got] == ["first", "second"]
         else:
             assert [item.text for item in got] == ["second"]
-        await flow.shutdown()
+        await flow.close()
 
 
 class TestFlowingBackpressure:
-    """A full buffer blocks draw() until the flow is consumed."""
+    """A full buffer blocks send() until the flow is consumed."""
 
-    async def test_draw_blocks_when_buffer_full_then_resumes(
-        self, make_message: MakeMessage, wait_until: WaitUntil
+    async def test_send_blocks_when_buffer_full_then_resumes(
+        self, make_event: MakeEvent, wait_until: WaitUntil
     ) -> None:
-        flow = Flowing[BaseMessage](size=1)
+        flow = Flowing[TextualEvent](buffer_size=1)
         await flow.start()
-        first = make_message("first")
-        second = make_message("second")
-        await flow.draw(first)
+        first = make_event("first")
+        second = make_event("second")
+        await flow.send(first)
 
-        got: list[BaseMessage] = []
+        got: list[TextualEvent] = []
         async with anyio.create_task_group() as tg:
 
-            async def blocked_draw() -> None:
-                await flow.draw(second)
+            async def blocked_send() -> None:
+                await flow.send(second)
 
             async def drain() -> None:
                 # 逐条 append 而非 extend: 部分结果需即时可见, 供轮询提前终止
-                async for item in flow.flow():
+                async for item in flow.receive():
                     got.append(item)  # noqa: PERF401
 
-            tg.start_soon(blocked_draw)
+            tg.start_soon(blocked_send)
             tg.start_soon(drain)
             await wait_until(lambda: len(got) == 2)
             tg.cancel_scope.cancel()
 
         assert got == [first, second]
-        await flow.shutdown()
+        await flow.close()

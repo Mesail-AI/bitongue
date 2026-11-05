@@ -2,7 +2,7 @@
 
 # Bitongue
 
-An async message flowing library built on anyio and msgspec
+An async event flowing library built on anyio and msgspec
 
 [中文](README.md) **·** [English]
 
@@ -20,19 +20,19 @@ An async message flowing library built on anyio and msgspec
 
 ## About
 
-Bitongue - A message flowing noting library.
+Bitongue - An asynchronous event flowing library.
 
-Bitongue is an async message flowing library: producers put messages into an in-memory flowing window; consumers draw them in order, pass them through filters, and hand them to a handler that produces results. Messages and results are [msgspec](https://jcristharif.com/msgspec/) structs and the async primitives come from [anyio](https://anyio.readthedocs.io/) — the flowing window owns buffering and lifetime control, the filter chain owns admission, and the handler owns business logic, each evolving independently.
+Bitongue is an async event flowing library: producers put events into an in-memory flowing window; consumers draw the events that passed the filter chain in order and handle the business logic on their side. Events are [msgspec](https://jcristharif.com/msgspec/) structs and the async primitives come from [anyio](https://anyio.readthedocs.io/) — the flowing window owns buffering and lifetime control, the filter chain owns admission, and business logic stays on the consumer side, each evolving independently.
 
 ## Features
 
-- **In-memory message flowing window**: a bounded buffer built on anyio memory streams, with a configurable window size and message lifetime; expired messages are dropped automatically at consumption time, and rejected or expired messages never block the rest
-- **Filter-chain admission**: messages pass through the filter chain before processing; filters run concurrently and a message is released only when every filter accepts it, while rejected messages are dropped silently
-- **Built-in filters**: the keyword blocklist `KeywordsFilter` (Aho-Corasick with normalized matching), duplicate interception via `SparseTextualFilter` (qdrant sparse retrieval — similar to the corpus means rejected), and model judgment via `NeuroTextualFilter` (natural-language rules decided by a large language model); filters implementing `FilterLifecycle` are started and stopped by the orchestrator
-- **Handler extension point**: implement one async `handle(message) -> result` method to plug in your business logic, keeping flow mechanics decoupled from message processing
-- **Two layers of timeout protection**: the flowing timeout bounds how long a message stays alive in the window, and the handle timeout caps the combined time a single message may spend in filtering and handling (a timeout actually cancels the in-flight work); timed-out messages are skipped without blocking the rest
-- **Type-safe data structures**: messages and results are msgspec structs with built-in dict and JSON serialization, and generic parameters flow through from send to result
-- **Layered dependencies**: the core (flowing window, orchestrator, keyword filter) depends only on a few packages such as anyio, msgspec, and pyahocorasick; the domain dependencies of duplicate interception via `SparseTextualFilter` (fastembed, jieba, qdrant-client) ship as the optional `sparse` extra, and those of model judgment via `NeuroTextualFilter` (autogen) ship as the optional `neuro` extra
+- **In-memory event flowing window**: a bounded buffer built on anyio memory streams, with a configurable window size and event lifetime; expired events are dropped automatically at consumption time, and rejected or expired events never block the rest
+- **Filter-chain admission**: events pass through the filter chain before consumption; filters run concurrently without short-circuiting (every filter sees every event), and a single matching verdict rejects the event, which is then dropped silently
+- **Built-in filters**: the keyword blocklist `KeywordFilter` (Aho-Corasick with normalized matching, subpackage `bitongue.filter.keyword`) and duplicate interception via `SparseTextFilter` (qdrant sparse retrieval — similar to the corpus means rejected, subpackage `bitongue.filter.sparse`); filters implementing `FilterLifecycle` are started and stopped by the orchestrator
+- **Consumer extension point**: `receive()` yields the events that passed filtering in order, so business logic stays on the consumer side, keeping flow mechanics decoupled from event processing
+- **Lifetime timeout protection**: `event_timeout` bounds how long an event stays alive in the window; expired events are skipped silently on the consumer side without blocking the rest
+- **Type-safe data structures**: events are msgspec structs with built-in dict and JSON serialization, and generic parameters flow through from send to consumption
+- **Layered dependencies**: the core (flowing window, orchestrator, keyword filter) depends only on a few packages such as anyio, msgspec, and pyahocorasick; the domain dependencies of duplicate interception via `SparseTextFilter` (fastembed, jieba, qdrant-client) ship as the optional `sparse` extra
 
 ## Installation
 
@@ -50,7 +50,7 @@ Python ≥ 3.12 is required. If the package is not yet published to PyPI, instal
 uv add git+https://github.com/Ahsen17/bitongue.git
 ```
 
-Using the built-in duplicate-interception filter `SparseTextualFilter` additionally
+Using the built-in duplicate-interception filter `SparseTextFilter` additionally
 requires the optional `sparse` extra (pip users write
 `pip install "bitongue[sparse]"`):
 
@@ -58,16 +58,9 @@ requires the optional `sparse` extra (pip users write
 uv add "bitongue[sparse]"
 ```
 
-Using the built-in model-judgment filter `NeuroTextualFilter` additionally requires
-the optional `neuro` extra (pip users write `pip install "bitongue[neuro]"`):
-
-```bash
-uv add "bitongue[neuro]"
-```
-
 ## Quick start
 
-Define a filter (drops empty text) and a handler (uppercases text), send two messages, and consume the result:
+Define a filter (rejects empty text), send two events, and consume the ones that passed (business logic lives on the consumer side):
 
 ```python
 from uuid import uuid4
@@ -75,50 +68,44 @@ from uuid import uuid4
 import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.filter import BaseFilter
-from bitongue.flow import TextualMessage
-from bitongue.handler import BaseHandler, BaseResult
+from bitongue.flow import Event
 
 
-class UpperResult(BaseResult):
-    """The handling result: uppercased text."""
+class TextEvent(Event):
+    """A business event: identity plus a text payload."""
 
-    text: str
-
-
-class NonEmptyFilter(BaseFilter[TextualMessage]):
-    """A filter that drops messages with empty text."""
-
-    async def filter(self, message: TextualMessage) -> bool:
-        return bool(message.text)
+    type: str = "text"
+    text: str = ""
 
 
-class UpperHandler(BaseHandler[TextualMessage, UpperResult]):
-    """A handler that uppercases the text."""
+class EmptyTextFilter:
+    """A filter that flags empty text (returning True rejects the event)."""
 
-    async def handle(self, message: TextualMessage) -> UpperResult:
-        return UpperResult(id=message.id, text=(message.text or "").upper())
+    async def filter(self, event: TextEvent) -> bool:
+        return not event.text
 
 
 async def main() -> None:
     config = BitongueConfig(
-        flowing_size=16,       # flowing window capacity (bounded buffer size)
-        flowing_timeout=30,    # seconds a message stays alive in the window
-        handle_timeout=5.0,    # per-message filtering+handling timeout in seconds
+        buffer_size=16,    # flowing window capacity (bounded buffer size)
+        event_timeout=30,  # seconds an event stays alive in the window
     )
-    client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
-
+    client = Bitongue(config, EmptyTextFilter())
     await client.start()
-    # The id is generated on the business side and passed through; real
-    # applications typically reuse an identifier they already have.
-    await client.send(TextualMessage(id=uuid4(), text="hello bitongue"))
-    await client.send(TextualMessage(id=uuid4(), text=""))  # dropped by the filter
 
-    async for result in client.result():
-        print(result.text)  # HELLO BITONGUE
-        break  # the demo ends here; keep consuming as needed in real usage
+    async def consume() -> None:
+        async for event in client.receive():
+            print(event.text.upper())  # business logic: uppercase the text
+            break  # the demo ends here; keep consuming as needed in real usage
 
-    await client.shutdown()
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(consume)
+        # The id is generated on the business side and passed through; real
+        # applications typically reuse an identifier they already have.
+        await client.send(TextEvent(id=uuid4(), text="hello bitongue"))
+        await client.send(TextEvent(id=uuid4(), text=""))  # rejected by the filter
+
+    await client.close()
 
 
 if __name__ == "__main__":
@@ -140,16 +127,15 @@ flowchart LR
     P[Producer] -->|send| W[Flowing window<br>bounded buffer + lifetime clock]
     W -->|in order| D{Expiry check}
     D -->|expired| X[Dropped silently]
-    D --> F[Filter chain<br>concurrent, all must pass]
+    D --> F[Filter chain<br>concurrent, any match rejects]
     F -->|rejected| X
-    F --> H[Handler<br>filtering+handling bounded by handle_timeout]
-    H -->|yield results| C[Consumer result]
+    F -->|yield events| C[Consumer receive<br>business logic on the consumer side]
 ```
 
-- **Production side**: `Bitongue.send()` wraps a message into an entry (recording its entry time and lifetime) and puts it into the bounded buffer; when the window is full the sender waits, creating backpressure.
-- **Consumption side**: `Bitongue.result()` draws entries in order and first drops those past their lifetime; filters run concurrently and messages accepted by all of them go to the handler under the combined `handle_timeout` bound covering filtering and handling, while timed-out messages are skipped. Failures follow the scope of the fault: handler exceptions are wrapped as `MessageHandleError` and emitted in order as `MessageHandleFailure` envelopes without interrupting the stream, while filter exceptions are collected into one `ExceptionGroup` that terminates the stream.
+- **Production side**: `Bitongue.send()` wraps an event into an entry (recording its entry time and lifetime) and puts it into the bounded buffer; when the window is full the sender waits, creating backpressure.
+- **Consumption side**: `Bitongue.receive()` draws entries in order and first drops those past their lifetime; filters run concurrently without short-circuiting, and a single matching verdict rejects the event, while the survivors are yielded one by one. Filter exceptions are collected into one `ExceptionGroup` that terminates the event stream.
 
-For the full structure and the life of a message, see [Architecture and data flow](https://ahsen17.github.io/bitongue/en/guide/architecture.html).
+For the full structure and the life of an event, see [Architecture and data flow](https://ahsen17.github.io/bitongue/en/guide/architecture.html).
 
 ## Development
 

@@ -1,172 +1,97 @@
 # Core concepts
 
-Bitongue splits message handling into five independent, single-purpose concepts. This page explains each one's responsibility, how they cooperate, and their boundary behavior.
+Bitongue splits event flow into four independent, single-responsibility concepts. This page covers each one's responsibilities, how they cooperate, and their edge behavior.
 
-## Messages and entries (`BaseMessage` / `TextualMessage` / `MessageEntry`)
+## Events and entries (`Event` / `TextEvent` / `EventEntry`)
 
-`BaseMessage` is the message base class (itself a subclass of `BaseStruct`, the msgspec struct wrapper shared by all data structures). It defines only the minimal message envelope: `id` (a caller-supplied unique identifier — bitongue never generates one; pass through the business-side ID you already have). The text message `TextualMessage` is the default concrete message type and adds two fields: `type` (a payload-kind tag, fixed to `"text"`) and `text` (optional text content; `None` means the message carries no text payload). The inherited `BaseStruct` provides `to_dict` / `from_dict` / `to_json` / `from_json`, so every message converts between dicts, JSON, and objects out of the box; messages with other payload shapes can subclass `BaseMessage` to add their own fields.
+`Event` is the base class of events (itself a subclass of the `BaseStruct` msgspec struct shared by all data structures), and defines only the minimal envelope: `id` (a unique identifier supplied by the caller — bitongue never generates ids; whatever identifier the business side already has is passed through). Business events subclass `Event` and add their own payload fields; a text payload, for instance, declares `type` (a payload-kind marker) and `text`. As the reference payload shape, `TextEvent` defines what a text event looks like (`type` fixed to `"text"`, `text` carrying the content); the built-in filters are generic over it. It carries no `id` of its own. The `BaseStruct` base provides `to_dict` / `from_dict` / `to_json` / `from_json` serialization, so every event converts naturally between dicts, JSON, and objects.
 
-A message does not enter the buffer directly when sent; it is first wrapped into a `MessageEntry` that, besides the message itself, records `enter_time` (the moment of entry) and `timeout` (the lifetime in seconds) for the flowing window's expiry checks.
+When an event is sent it does not enter the buffer directly; it is first wrapped into an `EventEntry`: alongside the event itself it records `enter_time` (when it entered the flow) and `timeout` (its lifetime in seconds), which the flowing window uses for expiry removal.
 
-## The flowing window (`Flowing`)
+## Flowing window (`Flowing`)
 
-`Flowing[T]` is the in-memory message flowing window — the holder of the bounded buffer:
+`Flowing[T]` is the in-memory event flowing window, the owner of the bounded buffer:
 
-- **Capacity**: `size` bounds the buffer (built on an anyio memory stream); when the window is full, the sender waits, which acts as natural backpressure.
-- **Lifetime**: `timeout` is how many seconds a message may stay in the window; if unset, messages never expire.
-- **Lifecycle**: `start()` creates the buffer and marks the window running; `shutdown()` closes it. Calling `draw()` (produce) or `flow()` (consume) while not running raises `FlowingNotInitializedError`.
-- **Expiry is enforced on the consumer side**: `flow()` yields only unexpired messages; entries older than their lifetime are skipped without producing anything or raising.
+- **Capacity**: `buffer_size` caps the buffer (built on an anyio memory stream); when the window is full the sender waits, creating natural backpressure.
+- **Lifetime**: `timeout` is how long an event stays alive in the window; unset means it never expires.
+- **Lifecycle**: `start()` creates the buffer and starts running; `close()` closes it. Calling `send()` (produce) or `receive()` (consume) while not running raises `RuntimeError`. Both lifecycle methods are idempotent.
+- **Expiry is enforced on the consumer side**: `receive()` yields unexpired events one by one; entries past their lifetime are skipped outright — never yielded, never an error.
 
-You normally do not operate `Flowing` directly — use the `Bitongue` orchestrator instead.
+You normally do not operate `Flowing` directly; the `Bitongue` orchestrator drives it for you.
 
-## Filters (`BaseFilter`)
+## Filters (`Filter`)
 
-`BaseFilter[T]` is a Protocol (a structural interface); implementing it takes one async method:
+`Filter[T]` is a Protocol (a structural interface); implementing it takes one async method:
 
 ```python
-async def filter(self, message: T) -> bool:
+async def filter(self, event: T) -> bool:
 ```
 
-Return `True` to release the message, `False` to reject it. Key points:
+Returning `True` flags the event for rejection; `False` lets it pass. Key points:
 
-- A message proceeds to handling only when **every filter in the chain returns `True`**; a single `False` drops the message silently.
-- Filters **run concurrently**: the chain starts them together in a task group — none waits for another, and all of them execute (no short-circuit). Filters should therefore be read-only, side-effect-free predicates, and must not assume any ordering among themselves.
-- With no filters configured, every message passes.
+- **Any filter returning `True`** drops the event silently; only when every filter returns `False` does the event reach the consumer.
+- Filters **run concurrently without short-circuiting**: the chain starts them together in a task group, none waits for another, and all of them execute — every filter sees every event. Filters should therefore be read-only, side-effect-free judgments, and must not assume anything about each other's ordering.
+- With no filters configured, every event passes.
+- A filter exception is a pipeline-level failure: the orchestrator waits for every filter to finish, then raises all collected exceptions as one `ExceptionGroup`, terminating the event stream — once admission breaks, no further event can be judged; concurrent sibling exceptions never swallow each other.
 
 ## Built-in filters
 
-Besides your own Protocol implementations, `bitongue.filter` ships three
-ready-to-use filters. They share the same `True`/`False` contract but take
-different admissions: `KeywordsFilter` is a **keyword blocklist** (a hit
-rejects), `SparseTextualFilter` is **duplicate interception** (similarity to the
-corpus rejects), and `NeuroTextualFilter` is **model judgment** (natural-language
-rules decided by a large language model).
+Besides implementing the `Filter` Protocol yourself, `bitongue` ships two ready-made filters.
+Both honor the same `True`/`False` contract with different intents: `KeywordFilter` is a
+**keyword blocklist** (a match rejects), `SparseTextFilter` is **duplicate interception**
+(similarity to the corpus rejects).
 
-### `KeywordsFilter` — keyword blocklist
+### `KeywordFilter` — keyword blocklist
 
-Multi-keyword matching on an Aho-Corasick automaton:
+Multi-keyword matching over an Aho-Corasick automaton, in the `bitongue.filter.keyword` subpackage:
 
-- **A hit rejects**: any keyword found in the text → reject; no hit → release;
-- **Normalized matching**: keywords and message text both go through the
-  `Normalizer` (casefold, non-word runs folded to spaces, NFKC), so case and
-  punctuation differences cannot hide a hit;
-- **Substring semantics**: a keyword firing as a fragment of the text counts
-  as a hit (Aho-Corasick matches substrings);
-- **Boundary behavior**: messages without a text payload are released (nothing
-  to match); with an empty keyword list nothing can be intercepted, so every
-  message is released;
-- The keyword list may come from a list or `load_from_file` (line by line,
-  UTF-8, blank lines ignored); both construction paths behave identically.
-  The automaton is built eagerly in the constructor — `filter` is a pure
-  lookup with no first-call cost.
-
-### `SparseTextualFilter` — duplicate interception via sparse retrieval
-
-The reference corpus is embedded into a qdrant sparse collection (BM25
-term-frequency weights with IDF modification); each message is embedded as a
-binary query vector and searched against it:
-
-- **Similarity rejects**: a message whose similarity to the corpus exceeds
-  `filter_threshold` (default 0.8) → reject; unrelated → release; no text
-  payload → release;
-- **Similarity mapping**: `similarity = scale·score / (1 + scale·score)`
-  (`normalize_scale` default 5), monotonically increasing in the BM25 score,
-  with a zero score (no overlap) mapping to zero. **The threshold semantics
-  run sensitive: under the defaults, even a single token overlapping the
-  corpus can push the BM25 score past 0.8 and trigger interception**; for a
-  looser gate raise `filter_threshold` (e.g. 0.9+) or lower `normalize_scale`
-  (e.g. 2.0);
-- **Deduplicated seeding**: each corpus string is addressed by the UUID5 of
-  its own text, so re-seeding overwrites existing points instead of stacking
-  copies; corpus documents that normalize to no usable token are skipped;
-- **Lifecycle**: initialization includes building the embedding and a full
-  corpus upsert, which is comparatively expensive, so the class implements
-  `FilterLifecycle` (`start()` / `aclose()`): handed to a `Bitongue`
-  orchestrator, `client.start()` initializes it and `shutdown()` releases the
-  connection; standalone, the first `filter` call lazily initializes (lock
-  protected, a one-time cost inside the caller's timeout budget);
-- **Configuration**: `Bm25Policy` (`language="chinese"` selects the local
-  `Bm25CN` implementation — no download, no network; any other language
-  selects fastembed's `Bm25`, which requires `model_name` and downloads the
-  model on first use) and `QdrantPolicy` (connection settings whose field
-  names mirror the qdrant-client constructor; `location` / `url` / `host` /
-  `path` are mutually exclusive — in-memory mode uses `location=":memory:"`
-  with `host=None`);
-- **Corpus chunking is the caller's responsibility**: each string is one
-  searchable unit.
-
-### `NeuroTextualFilter` — rule judgment by a large language model
-
-The filtering rules and the message text travel together to an
-OpenAI-compatible chat endpoint (via autogen's `AssistantAgent`
-internally), and the model returns a structured verdict against the
-rules:
-
-- **A rejecting verdict rejects**: the model answering `filtered=True` →
-  reject; a releasing verdict → release. Rules accept a single string or a
-  list of strings (a list is joined into one rule block with newlines);
-- **No model call, release**: messages without a text payload, or with
-  rules that normalize to nothing, are released outright — neither boundary
-  issues a model call;
-- **Every failure on the model path raises**: a response not matching the
-  verdict schema (`ValueError`), a backend error, or a single call exceeding
-  `timeout` (`TimeoutError`) all raise — the filter swallows nothing. Under
-  the orchestrator, a timeout is caught by the existing `handle_timeout`
-  contract (that message is skipped silently); every other error is a
-  pipeline-scoped failure, combined into the filter chain's `ExceptionGroup`
-  that terminates the result stream;
-- **Isolation between messages**: every verdict runs in a fresh conversation
-  context that is cleared as soon as the verdict is read — one message's text
-  never enters another's request; a single instance is not safe for
-  concurrent calls (the orchestrator's single-consumer pipeline already
-  serializes them);
-- **Lifecycle**: construction only stores the configuration and contacts
-  nothing; `start()` builds the agent and the model client, and calling
-  `filter` before that raises `RuntimeError`. Unlike `SparseTextualFilter`'s lazy
-  initialization, `NeuroTextualFilter` must be started first — handing it to an
-  orchestrator covers this through `client.start()`;
-- **Configuration**: `NeuroFilterPolicy` (endpoint `base_url`, `api_key`,
-  model `model`, rules `rules`, per-verdict `timeout`); the customization
-  point for endpoint and model capability claims is `OpenAIClientProvider`.
-  Note that serializing the policy (`to_json`) carries the `api_key` along —
-  treat a serialized policy as secret material;
-- **Dependencies**: shipped as the optional `neuro` extra, imported from its
-  own subpackage:
+- **A match rejects**: any keyword occurring in the text → reject (return `True`); no match → pass;
+- **Normalized matching**: keywords and event text alike go through `Normalizer` first (casefold,
+  non-word runs folded to spaces, NFKC), so case and punctuation differences cannot hide a match;
+- **Substring semantics**: a keyword firing as a fragment of the text counts (Aho-Corasick matches substrings);
+- **Edge behavior**: events without a text payload pass (nothing to match); an empty keyword list
+  intercepts nothing and passes everything;
+- The keyword set comes from varargs or `load_file` (read line by line, UTF-8, blank lines skipped); both construction paths behave identically. The automaton is built at construction time, so `filter` is a pure query with no first-call cost.
 
 ```python
-from bitongue.filter.neuro import NeuroTextualFilter, NeuroFilterPolicy
+from bitongue.filter.keyword import KeywordFilter
 ```
 
-The verdict type is a pydantic model — a hard requirement of autogen's
-structured output, and the library's single deliberate exception to its
-"all data structures are msgspec" convention.
+### `SparseTextFilter` — duplicate interception over sparse retrieval
 
-The supporting tool `Normalizer` (text normalization) is usable on its own;
-`JiebaTokenizer` (Chinese search-mode segmentation) lives in the sparse
-subpackage (`bitongue.filter.sparse`) alongside `SparseTextualFilter` and requires
-the optional `sparse` extra.
+The reference corpus is embedded into a qdrant sparse collection (BM25 term-frequency weights + IDF correction), and each event queries it as a binary vector; the filter lives in the `bitongue.filter.sparse` subpackage:
 
-## Handlers and results (`BaseHandler` / `BaseResult` / `MessageHandleFailure`)
-
-`BaseHandler[T, R]` is the business-logic extension point, also a Protocol, with one async method:
+- **Similarity rejects**: when an event's similarity to the corpus exceeds `filter_threshold` (default 0.8) → reject (return `True`); unrelated events pass; no text payload → pass;
+- **Similarity mapping**: `similarity = scale·score / (1 + scale·score)` (`normalize_scale` defaults to 5), monotonically increasing with the BM25 score, with a zero score (no overlap) mapping naturally to 0. **The threshold leans sensitive: with the defaults, a single overlapping token can push the BM25 score past 0.8 and trigger interception.** For looser admission raise `filter_threshold` (e.g. 0.9+) or lower `normalize_scale` (e.g. 2.0);
+- **Deduplicated seeding**: each corpus string is addressed by a UUID5 derived from its own text, so re-seeding overwrites old points instead of accumulating copies; corpus documents that normalize to no usable token are skipped; the corpus is materialized at construction, so passing a generator is safe;
+- **Lifecycle**: initialization includes model building and a full corpus upsert, which is expensive, so the filter implements `FilterLifecycle` (`start()` / `close()`): driven by the `Bitongue` orchestrator, `client.start()` initializes it and `close()` releases the connection; standalone, the first `filter` call triggers lazy initialization (lock-protected, a one-off cost charged to the caller's timeout budget);
+- **Configuration**: `Bm25Policy` (`language="chinese"` selects the local `Bm25CN` implementation — no downloads, no network; other languages select fastembed's `Bm25`, which requires `model_name` and downloads the model on first use) and `QdrantPolicy` (connection settings whose fields mirror the qdrant-client constructor signature; `location` / `url` / `host` / `path` are mutually exclusive, and in-memory mode uses `location=":memory:"` with `host=None`);
+- **Corpus chunking is the caller's job**: each string is one retrievable unit;
+- **Dependencies**: shipped as the optional `sparse` extra, imported from the sparse subpackage:
 
 ```python
-async def handle(self, message: T) -> R:
+from bitongue.filter.sparse import SparseTextFilter
 ```
 
-`R` must be a subclass of `BaseResult` — results are msgspec structs just like messages, with the same serialization abilities; the base class already carries an `id` field (same convention as `BaseMessage.id`: a business-side identifier supplied by the caller, conventionally mirrored from the source message), and the subclass declares the remaining fields the handler yields. Declaring the result type as a generic parameter (`BaseHandler[TextualMessage, UpperResult]`) gives you type checking across the whole path from send to result.
+The supporting tool `Normalizer` (text normalization) is importable standalone from `bitongue.filter`;
+`JiebaTokenizer` (Chinese search-engine-mode segmentation) lives in the sparse subpackage
+(`bitongue.filter.sparse`) alongside `SparseTextFilter`, and requires the `sparse` extra.
 
-Failures follow the scope of the fault. An exception a handler raises is a message-scoped failure: it is wrapped into `MessageHandleError` and emitted in order as a `MessageHandleFailure` envelope (carrying the source message and the error text), and the stream keeps consuming later messages — the yield type of `result()` is therefore `R | MessageHandleFailure`, and consumers tell normal results and failure envelopes apart with `isinstance`. If the combined time a message spends in filtering and handling exceeds the configured `handle_timeout`, that message is skipped silently (no result is produced, and consumption continues). An exception a filter raises is a pipeline-scoped failure: the orchestrator waits for every filter to finish, combines all their exceptions into one `ExceptionGroup`, and raises it, terminating the result stream — a broken admission mechanism cannot decide any further message, and concurrent sibling exceptions are never swallowed.
+## The consumer extension point
 
-## The orchestrator (`Bitongue` / `BitongueConfig`)
+Bitongue does not prescribe how events are handled: `receive()` yields the events that passed filtering in order, and the business logic runs freely inside the consume loop — rewriting, persisting, forwarding, calling a model, all up to you. Flow mechanics (buffering, lifetime control, filtering) are therefore fully decoupled from business processing: swapping the logic does not touch the flow configuration, and vice versa.
 
-`Bitongue[T, R]` assembles the parts above into one pipeline:
+Failure semantics revolve around flow, not business: the filter chain is an admission facility, and its exceptions surface as one `ExceptionGroup` that terminates the event stream (see "Filters" above); what the consumer does with its own exceptions is the consumer's decision — the library wraps and forwards nothing.
 
-- **Construction**: takes a `BitongueConfig`, a handler (required), and an optional collection of filters;
-- **Lifecycle**: `start()` creates and starts the flowing window internally; `shutdown()` closes it in reverse order; both are idempotent — calling `start()` on a running client or `shutdown()` on a stopped client does nothing — and the `running` property reports the current state;
-- **Production side**: `send(message)` submits a message, wrapping and timing it internally;
-- **Consumption side**: `result()` is an async generator that runs "expiry removal → filter chain → handler" in order (filters inside the chain run concurrently; `handle_timeout` covers both the filtering and handling phases) and yields results one at a time.
+## Orchestrator (`Bitongue` / `BitongueConfig`)
 
-Two boundary behaviors to note: calling `send()` or `result()` before `start()` raises a `RuntimeError`, and `result()` should be iterated by exactly one consumer at a time (the underlying buffer is a single-consumer memory stream).
+`Bitongue[T]` assembles the parts above into one complete pipeline:
 
-For the full semantics of the configuration fields, see [Configuration](configuration.md); for a structural view of the whole path, see [Architecture and data flow](architecture.md).
+- **Construction**: a `BitongueConfig` plus any number of filters (optional, passed as varargs);
+- **Lifecycle**: `start()` creates and starts the flowing window and starts every filter implementing `FilterLifecycle`; `close()` closes those filters in **reverse** registration order and then the window; both are idempotent — a repeated `start()` on a running client and a `close()` on a stopped one do nothing; the `running` property reflects the current state;
+- **Production side**: `send(event)` enqueues an event, wrapping and timing the entry internally;
+- **Consumption side**: `receive()` is an async generator that runs "expiry removal → filter chain" in order and yields the events that passed (filters within the chain run concurrently).
+
+Two edge behaviors to note: calling `send()` or `receive()` before `start()` raises `RuntimeError`; `receive()` should be iterated by exactly one consumer at a time (the underlying buffer is a single-consumer memory stream).
+
+For full configuration semantics see [Configuration](configuration.md); for the structural view of the whole pipeline see [Architecture and data flow](architecture.md).

@@ -25,14 +25,14 @@ SCRIPT = dedent(
 
     sys.meta_path.insert(0, Blocker())
 
-    from bitongue.filter import BaseFilter, KeywordsFilter, Normalizer
+    from bitongue.filter import Filter, FilterLifecycle, Normalizer
 
-    assert BaseFilter is not None
-    assert KeywordsFilter is not None
+    assert Filter is not None
+    assert FilterLifecycle is not None
     assert Normalizer is not None
 
     try:
-        from bitongue.filter.sparse import SparseTextualFilter  # noqa: F401
+        from bitongue.filter.sparse import SparseTextFilter  # noqa: F401
     except ModuleNotFoundError as exc:
         assert exc.name in {BLOCKED!r}
     else:

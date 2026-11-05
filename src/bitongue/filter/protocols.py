@@ -1,55 +1,42 @@
-"""Message admission gate for the flowing pipeline.
-
-A filter decides whether a message is allowed to proceed to handling.
-Implement the protocol with a plain class — no inheritance required.
-"""
+"""Filter chain contracts."""
 
 from typing import Protocol, runtime_checkable
 
-from bitongue.flow import BaseMessage
+from bitongue.flow import Event
 
 __all__ = (
-    "BaseFilter",
+    "Filter",
     "FilterLifecycle",
 )
 
 
-class BaseFilter[T: BaseMessage](Protocol):
-    """A predicate that decides which messages may proceed.
+@runtime_checkable
+class Filter[T: Event](Protocol):
+    """Gate an event before it reaches the consumer."""
 
-    Implementations should be side-effect-free predicates: the orchestrator
-    runs every filter in the chain without short-circuiting, so a filter
-    may be called even when an earlier one already rejected the message.
+    async def filter(self, event: "T") -> bool:
+        """Judge the event.
 
-    Raising turns the whole admission round into a pipeline-scoped
-    failure: the orchestrator waits for every filter, collects all their
-    exceptions into one :class:`ExceptionGroup`, and raises it —
-    terminating the result stream.
+        Args:
+            event: The candidate event.
 
-    Returns:
-        ``True`` to release the message into handling; ``False`` to reject
-        it, which drops the message silently with no result and no error.
-    """
+        Returns:
+            ``True`` to reject the event (silently dropped), ``False``
+            to let it pass.
+        """
 
-    async def filter(self, message: "T") -> bool: ...
+        ...
 
 
 @runtime_checkable
 class FilterLifecycle(Protocol):
-    """Lifecycle hooks for filters that hold runtime resources.
+    """Lifecycle for filters holding resources.
 
-    A filter that builds connections or loads models implements this
-    protocol so the orchestrator can pay the initialization cost once at
-    client start-up instead of on the first filtered message: the client
-    calls :meth:`start` when it starts and :meth:`aclose` when it shuts
-    down. Plain filters do not implement it and work with no lifecycle
-    management.
-
-    The capability is detected structurally, so :meth:`start` should be
-    idempotent — a filter started eagerly by the client still tolerates a
-    lazy start attempt from its own code path.
+    The client probes this structurally (``getattr``): filters that
+    implement ``start``/``close`` are started and closed by the client,
+    so resource-holding filters should expose exactly these names.
     """
 
     async def start(self) -> None: ...
 
-    async def aclose(self) -> None: ...
+    async def close(self) -> None: ...

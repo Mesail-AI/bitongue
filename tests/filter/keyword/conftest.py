@@ -1,4 +1,4 @@
-"""Fixtures shared by the filter unit-test subtree."""
+"""Fixtures shared by the keyword-filter unit tests."""
 
 from collections.abc import Callable
 from pathlib import Path

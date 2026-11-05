@@ -1,3 +1,5 @@
+"""Qdrant-backed sparse-retrieval dedup filter."""
+
 import math
 from collections.abc import Iterable
 from typing import Final, cast
@@ -9,13 +11,13 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qdrant_models
 from uuid_utils.compat import uuid5
 
-from bitongue.filter.protocols import BaseFilter, FilterLifecycle
-from bitongue.flow import TextualMessage
+from bitongue.filter import Filter, FilterLifecycle
+from bitongue.flow import TextEvent
 
 from .bm25 import Bm25, Bm25CN
 from .policy import Bm25Policy, QdrantPolicy
 
-__all__ = ("SparseTextualFilter",)
+__all__ = ("SparseTextFilter",)
 
 
 POINT_NAMESPACE: Final[UUID] = UUID("8326bf65-7163-4452-a591-c8dc45cd7670")
@@ -23,36 +25,36 @@ POINT_NAMESPACE: Final[UUID] = UUID("8326bf65-7163-4452-a591-c8dc45cd7670")
 SPARSE_VECTOR_NAME: Final[str] = "sparse"
 
 
-class SparseTextualFilter[T: TextualMessage](BaseFilter, FilterLifecycle):
-    """Reject messages that duplicate one of the reference documents.
+class SparseTextFilter[T: TextEvent](Filter, FilterLifecycle):
+    """Corpus-similarity dedup filter over qdrant sparse retrieval.
 
-    The reference corpus is embedded with BM25 into a qdrant sparse
-    collection (IDF-modified). Each incoming message is embedded as a
-    binary query vector and searched against the corpus; when its best
-    matches exceed ``filter_threshold`` similarity the message is
-    rejected, and messages unrelated to the corpus are released. A
-    message without a text payload is released as well — there is
-    nothing to match.
+    A corpus of reference documents is seeded into a qdrant collection,
+    one point per document, addressed by a UUID5 derived from the
+    document text itself — re-seeding the same corpus overwrites
+    instead of accumulating. An event is rejected when its sparse
+    embedding is similar enough to any corpus point: each hit score is
+    squashed through a saturation curve and compared against
+    ``filter_threshold``.
 
-    Reference-document chunking is the caller's responsibility: each
-    string becomes exactly one searchable point, addressed by a UUID5
-    derived from its own text, so re-seeding the same corpus overwrites
-    existing points instead of piling up copies. Corpus documents that
-    normalize to no usable token are skipped rather than seeded.
+    The embedding model and qdrant client form a lazily built runtime:
+    constructed on first use (or on :meth:`start`) under a lock, so
+    construction never blocks on I/O. Must be started — explicitly or
+    implicitly via :meth:`filter` — before it can match events.
 
-    Initialization is comparatively expensive (embedding construction
-    plus a full corpus upsert), so the class implements
-    :class:`FilterLifecycle`: hand it to a
-    :class:`bitongue.client.Bitongue` client, which starts and closes it
-    around the pipeline lifecycle. Standalone use stays possible — the
-    first :meth:`filter` call lazily runs the same one-time
-    initialization under a lock, paying the cost inside the caller's
-    timeout budget.
+    Args:
+        collection_name: Target qdrant collection, created when absent.
+        documents: Reference corpus seeded into the collection.
+        embed_policy: Sparse embedding configuration; defaults to the
+            local Chinese Bm25 implementation.
+        qdrant_policy: qdrant connection settings; defaults to
+            ``localhost:6333``.
+        filter_threshold: Rejection threshold on the normalized score,
+            strictly within ``(0, 1)``.
+        normalize_scale: Saturation scale of the score normalization.
 
-    Configuration problems raise at construction; start-up problems
-    raise from :meth:`start` (or the orchestrating client). The
-    :meth:`filter` call itself raises no expected errors — runtime
-    lookups degrade to the documented release/reject outcomes.
+    Raises:
+        ValueError: If ``filter_threshold`` is outside ``(0, 1)`` or
+            ``normalize_scale`` is not positive and finite.
     """
 
     def __init__(
@@ -68,7 +70,7 @@ class SparseTextualFilter[T: TextualMessage](BaseFilter, FilterLifecycle):
 
         if not 0.0 < filter_threshold < 1.0:
             raise ValueError(
-                f"Invalid filter threshold: {filter_threshold}, must be in (0, 1)",
+                f"Invalid filter threshold: {filter_threshold}",
             )
 
         if not math.isfinite(normalize_scale) or normalize_scale <= 0:
@@ -76,7 +78,7 @@ class SparseTextualFilter[T: TextualMessage](BaseFilter, FilterLifecycle):
                 f"Invalid normalize scale: {normalize_scale}, must be positive",
             )
 
-        self._documents = tuple(documents)
+        self._documents = list(documents)
 
         self._collection_name = collection_name
         self._filter_threshold = filter_threshold
@@ -99,14 +101,17 @@ class SparseTextualFilter[T: TextualMessage](BaseFilter, FilterLifecycle):
 
     @property
     def running(self) -> bool:
+        """Whether the runtime is currently built."""
 
         return self._runtime is not None
 
     async def start(self) -> None:
+        """Build the runtime eagerly: load the model, connect and seed."""
 
         await self._ensure_runtime()
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
+        """Close the qdrant client and drop the runtime. Idempotent."""
 
         async with self._lock:
             if self._runtime is not None:
@@ -118,6 +123,7 @@ class SparseTextualFilter[T: TextualMessage](BaseFilter, FilterLifecycle):
     async def _ensure_runtime(
         self,
     ) -> tuple[SparseTextEmbeddingBase, AsyncQdrantClient]:
+        """Return the runtime, building it once under the lock."""
 
         async with self._lock:
             if self._runtime is None:
@@ -128,6 +134,13 @@ class SparseTextualFilter[T: TextualMessage](BaseFilter, FilterLifecycle):
     async def _build(
         self,
     ) -> tuple[SparseTextEmbeddingBase, AsyncQdrantClient]:
+        """Build the embedding model and the qdrant client, then seed.
+
+        The collection is created with an IDF-modified sparse vector
+        when absent. Corpus documents are embedded and upserted under
+        their deterministic UUID5 ids; documents that normalize to no
+        usable token are skipped.
+        """
 
         policy = self._embed_policy
         embedding: SparseTextEmbeddingBase
@@ -205,33 +218,44 @@ class SparseTextualFilter[T: TextualMessage](BaseFilter, FilterLifecycle):
         return embedding, qdrant
 
     def _score_normalize(self, score: float, *, scale: float) -> float:
+        """Squash a raw score onto ``(0, 1)`` via a saturation curve.
+
+        Computes ``scale * s / (1 + scale * s)``, which maps unbounded
+        retrieval scores into a comparable range so a single fixed
+        ``filter_threshold`` works across corpora.
+        """
 
         return scale * score / (1.0 + scale * score)
 
-    async def filter(self, message: "T") -> bool:
-        """Reject the message when it duplicates a reference document.
+    async def filter(self, event: "T") -> bool:
+        """Reject the event when the corpus holds a close match.
+
+        Queries the collection with the event's sparse embedding and
+        rejects on the first hit whose normalized score exceeds the
+        threshold. Non-text events, empty text, and queries that
+        produce no tokens pass through.
+
+        Args:
+            event: The candidate event.
 
         Returns:
-            ``False`` when a corpus point matches the message with
-            similarity above ``filter_threshold``; ``True`` when the
-            message is unrelated to the corpus or carries no text
-            payload.
+            ``True`` when the corpus matches too closely, ``False`` to
+            pass.
         """
 
-        if message.type != "text" or not message.text:
-            # Not a text message or no text payload. Release it.
-            return True
+        if event.type != "text" or not event.text:
+            return False
 
         embedding, qdrant = await self._ensure_runtime()
 
         query_embedding = next(
-            iter(embedding.query_embed(query=message.text)),
+            iter(embedding.query_embed(query=event.text)),
         )
 
         if query_embedding.indices.size == 0:
-            return True
+            return False
 
-        return not any(
+        return any(
             self._score_normalize(point.score, scale=self._normalize_scale)
             > self._filter_threshold
             for point in (

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from bitongue.base import SerializationError
 from bitongue.filter.sparse import Bm25Policy, QdrantPolicy
 
 
@@ -46,7 +45,7 @@ class TestBm25Policy:
 
     def test_to_json_rejects_path_field(self) -> None:
         policy = Bm25Policy(stopwords_filepath=Path("stopwords.txt"))
-        with pytest.raises(SerializationError):
+        with pytest.raises(TypeError, match="PosixPath"):
             policy.to_json()
 
 

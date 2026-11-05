@@ -1,4 +1,4 @@
-"""SparseTextualFilter integration tests against a real qdrant server.
+"""SparseTextFilter integration tests against a real qdrant server.
 
 Connection: ``BITONGUE_TEST_QDRANT_URL`` first, falling back to
 ``BITONGUE_TEST_QDRANT_HOST``/``BITONGUE_TEST_QDRANT_PORT`` (default
@@ -13,15 +13,12 @@ from uuid import uuid4
 import anyio
 import pytest
 from qdrant_client import AsyncQdrantClient
+from tests.conftest import MakeTextEvent, TextualEvent
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.filter.sparse import QdrantPolicy, SparseTextualFilter
-from bitongue.flow import TextualMessage
-from test_integration.conftest import (
-    CollectResults,
-    MakeMessage,
-    ScriptedHandler,
-)
+from bitongue.filter.sparse import QdrantPolicy, SparseTextFilter
+from bitongue.flow import TextEvent
+from test_integration.conftest import CollectEvents
 
 pytestmark = pytest.mark.integration
 
@@ -56,7 +53,7 @@ async def _probe(policy: QdrantPolicy) -> bool:
     return True
 
 
-type MakeIntegrationFilter = Callable[..., SparseTextualFilter[TextualMessage]]
+type MakeIntegrationFilter = Callable[..., SparseTextFilter[TextEvent]]
 
 
 @pytest.fixture
@@ -74,11 +71,11 @@ async def real_qdrant_policy() -> QdrantPolicy:
 async def make_integration_filter(
     real_qdrant_policy: QdrantPolicy,
 ) -> AsyncIterator[MakeIntegrationFilter]:
-    """Factory fixture: a real-server SparseTextualFilter; teardown closes
+    """Factory fixture: a real-server SparseTextFilter; teardown closes
     it and deletes the collection."""
 
     raw = AsyncQdrantClient(**{**real_qdrant_policy.to_dict(), "timeout": 30})
-    created: list[tuple[SparseTextualFilter[TextualMessage], str]] = []
+    created: list[tuple[SparseTextFilter[TextEvent], str]] = []
 
     def _make(
         documents: list[str],
@@ -86,9 +83,9 @@ async def make_integration_filter(
         filter_threshold: float = 0.8,
         normalize_scale: float = 5.0,
         collection_name: str | None = None,
-    ) -> SparseTextualFilter[TextualMessage]:
+    ) -> SparseTextFilter[TextEvent]:
         name = collection_name or f"it_{uuid4().hex}"
-        sut: SparseTextualFilter[TextualMessage] = SparseTextualFilter(
+        sut: SparseTextFilter[TextEvent] = SparseTextFilter(
             name,
             documents,
             qdrant_policy=real_qdrant_policy,
@@ -101,7 +98,7 @@ async def make_integration_filter(
     yield _make
 
     for sut, _name in created:
-        await sut.aclose()
+        await sut.close()
     for _sut, name in created:
         try:
             await raw.delete_collection(name)
@@ -116,31 +113,33 @@ class TestDuplicateInterception:
     async def test_variant_rejected_and_unrelated_released(
         self,
         make_integration_filter: MakeIntegrationFilter,
-        make_message: MakeMessage,
+        make_text_event: MakeTextEvent,
     ) -> None:
         sut = make_integration_filter(
             ["已知违规文案示例 alpha", "another known reference beta"],
         )
         await sut.start()
-        assert await sut.filter(make_message("已知违规文案示例 alpha 修改版")) is False
-        assert await sut.filter(make_message("completely unrelated new content")) is True
+        assert await sut.filter(make_text_event("已知违规文案示例 alpha 修改版")) is True
+        assert (
+            await sut.filter(make_text_event("completely unrelated new content")) is False
+        )
 
     async def test_reseed_keeps_verdicts_consistent(
         self,
         make_integration_filter: MakeIntegrationFilter,
-        make_message: MakeMessage,
+        make_text_event: MakeTextEvent,
     ) -> None:
         # Re-seeding the same collection name: uuid5 dedup upsert, and the
         # verdicts stay consistent across instances.
         name = f"it_{uuid4().hex}"
         first = make_integration_filter(["持久化判重语料"], collection_name=name)
         await first.start()
-        await first.aclose()
+        await first.close()
 
         second = make_integration_filter(["持久化判重语料"], collection_name=name)
         await second.start()
-        assert await second.filter(make_message("持久化判重语料 变体")) is False
-        assert await second.filter(make_message("无关新内容")) is True
+        assert await second.filter(make_text_event("持久化判重语料 变体")) is True
+        assert await second.filter(make_text_event("无关新内容")) is False
 
 
 class TestClientAssembly:
@@ -150,23 +149,25 @@ class TestClientAssembly:
     async def test_lifecycle_end_to_end(
         self,
         make_integration_filter: MakeIntegrationFilter,
-        collect_results: CollectResults,
+        collect_events: CollectEvents,
     ) -> None:
         sut = make_integration_filter(["端到端违规文案"])
         config = BitongueConfig(
-            flowing_size=8,
-            flowing_timeout=30,
-            handle_timeout=30,
+            buffer_size=8,
+            event_timeout=30,
         )
-        client = Bitongue(config, handler=ScriptedHandler(), filters=[sut])
+        client = Bitongue(config, sut)
         await client.start()  # Init cost lands on client.start, not message 1.
         assert sut.running is True
 
-        # The released message must share zero tokens with the corpus: even a
-        # single overlapping token can score above the default threshold.
-        await client.send(TextualMessage(id=uuid4(), text="端到端违规文案 变体"))
-        await client.send(TextualMessage(id=uuid4(), text="totally different subject"))
+        # The rejected variant must share tokens with the corpus; the
+        # released message must share zero tokens with it: even a single
+        # overlapping token can score above the default threshold.
+        rejected = TextualEvent(id=uuid4(), text="端到端违规文案 变体")
+        released = TextualEvent(id=uuid4(), text="totally different subject")
+        await client.send(rejected)
+        await client.send(released)
 
-        results = await collect_results(client, count=1)
-        await client.shutdown()
-        assert [r.content for r in results] == ["totally different subject"]
+        events = await collect_events(client, count=1)
+        await client.close()
+        assert [item.text for item in events] == ["totally different subject"]

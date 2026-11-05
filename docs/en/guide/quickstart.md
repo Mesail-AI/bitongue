@@ -1,6 +1,6 @@
 # Quick start
 
-This page takes you from installation to a complete first example: send two messages, pass them through a filter and a handler, and consume the result.
+This page walks you from installation to a first complete example: send two events, pass them through a filter, and consume the survivors.
 
 ## Prerequisites
 
@@ -27,32 +27,22 @@ If the package is not yet published to PyPI, install it from source:
 uv add git+https://github.com/Ahsen17/bitongue.git
 ```
 
-The built-in `SparseTextualFilter` depends on fastembed, jieba, and qdrant-client,
-published as the optional `sparse` extra; install it if you need that filter
-(pip users write `pip install "bitongue[sparse]"`):
+The built-in `SparseTextFilter` depends on fastembed, jieba, and qdrant-client, shipped as the optional `sparse` extra (pip users write `pip install "bitongue[sparse]"`):
 
 ```bash
 uv add "bitongue[sparse]"
 ```
 
-The built-in `NeuroTextualFilter` depends on the autogen packages, published as the
-optional `neuro` extra; install it if you need that filter (pip users write
-`pip install "bitongue[neuro]"`):
+## A first example
 
-```bash
-uv add "bitongue[neuro]"
-```
+Developing with Bitongue means "define the event, implement filters, consume what passes":
 
-## Your first example
+1. Define a **business event type** (subclass `Event`, adding your payload fields);
+2. Implement **filters** (satisfying the `Filter` Protocol — return `True` on a match);
+3. Create the `Bitongue` orchestrator from a `BitongueConfig` and your filters; after `start`, `send` and `receive` become available;
+4. Handle the business logic inside the `receive()` consume loop.
 
-Developing with Bitongue means "implement three parts and hand them to an orchestrator":
-
-1. Define a **result type** (inherit from `BaseResult`);
-2. Implement a **handler** (inherit from `BaseHandler`, containing your business logic);
-3. Optionally implement one or more **filters** (inherit from `BaseFilter`, deciding which messages pass);
-4. Create the `Bitongue` orchestrator with a `BitongueConfig` and those parts; after `start`, you can `send` messages and consume `result`.
-
-The complete runnable example (save as `demo.py`):
+A complete runnable example (save as `demo.py`):
 
 ```python
 from uuid import uuid4
@@ -60,50 +50,44 @@ from uuid import uuid4
 import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.filter import BaseFilter
-from bitongue.flow import TextualMessage
-from bitongue.handler import BaseHandler, BaseResult
+from bitongue.flow import Event
 
 
-class UpperResult(BaseResult):
-    """The handling result: uppercased text."""
+class TextEvent(Event):
+    """A business event: identity plus a text payload."""
 
-    text: str
-
-
-class NonEmptyFilter(BaseFilter[TextualMessage]):
-    """A filter that drops messages with empty text."""
-
-    async def filter(self, message: TextualMessage) -> bool:
-        return bool(message.text)
+    type: str = "text"
+    text: str = ""
 
 
-class UpperHandler(BaseHandler[TextualMessage, UpperResult]):
-    """A handler that uppercases the text."""
+class EmptyTextFilter:
+    """A filter that flags empty text (returning True rejects the event)."""
 
-    async def handle(self, message: TextualMessage) -> UpperResult:
-        return UpperResult(id=message.id, text=(message.text or "").upper())
+    async def filter(self, event: TextEvent) -> bool:
+        return not event.text
 
 
 async def main() -> None:
     config = BitongueConfig(
-        flowing_size=16,       # flowing window capacity (bounded buffer size)
-        flowing_timeout=30,    # seconds a message stays alive in the window
-        handle_timeout=5.0,    # per-message filtering+handling timeout in seconds
+        buffer_size=16,   # flowing window capacity (bounded buffer size)
+        event_timeout=30,  # seconds an event stays alive in the window
     )
-    client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
-
+    client = Bitongue(config, EmptyTextFilter())
     await client.start()
-    # The id is generated on the business side and passed through; real
-    # applications typically reuse an identifier they already have.
-    await client.send(TextualMessage(id=uuid4(), text="hello bitongue"))
-    await client.send(TextualMessage(id=uuid4(), text=""))  # dropped by the filter
 
-    async for result in client.result():
-        print(result.text)  # HELLO BITONGUE
-        break  # the demo ends here; keep consuming as needed in real usage
+    async def consume() -> None:
+        async for event in client.receive():
+            print(event.text.upper())  # business logic: uppercase the text
+            break  # the demo ends here; keep consuming as needed in real usage
 
-    await client.shutdown()
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(consume)
+        # The id is generated on the business side and passed through; real
+        # applications typically reuse an identifier they already have.
+        await client.send(TextEvent(id=uuid4(), text="hello bitongue"))
+        await client.send(TextEvent(id=uuid4(), text=""))  # rejected by the filter
+
+    await client.close()
 
 
 if __name__ == "__main__":
@@ -122,68 +106,35 @@ Output:
 HELLO BITONGUE
 ```
 
-## What just happened
+## What happened
 
-1. `client.send(...)` wrapped each message into an entry that records its entry time and timeout, then put it into the flowing window's bounded buffer; the empty-text message entered the buffer too.
-2. `client.result()` consumes entries in send order: messages that stayed in the window longer than `flowing_timeout` are dropped as expired; here the empty-text message is rejected by `NonEmptyFilter` and dropped silently, producing no result.
-3. The message that passed the filter is handed to `UpperHandler.handle`; the combined filtering and handling must finish within `handle_timeout` seconds and produces an `UpperResult` (the result mirrors the source message's `id`).
-4. `result()` yields the results one by one; the example stops at the first one.
+1. `client.send(...)` wrapped each event into an entry carrying its entry time and timeout marker, and put it into the bounded buffer; the empty-text event entered the buffer too.
+2. `client.receive()` consumed entries in send order: first dropping entries that stayed longer than `event_timeout`; in this example the empty-text event was flagged by `EmptyTextFilter` (returned `True`), dropped silently, and never yielded.
+3. Events that passed the filter are yielded one by one by `receive()`; the business logic (uppercasing) runs inside the consume loop.
+4. The example stops after the first event.
 
 ## Using the built-in filters
 
-Instead of implementing `BaseFilter` yourself, `bitongue.filter` ships two
-ready-to-use filters. Taking the keyword blocklist as an example, just swap
-the filter collection:
+Besides implementing the `Filter` Protocol yourself, `bitongue` ships two ready-made filters.
+Take the keyword blocklist as an example — just swap the filter set (any keyword match rejects the event):
 
 ```python
-from bitongue.filter import KeywordsFilter
+from bitongue.filter.keyword import KeywordFilter
 
-client = Bitongue(
-    config,
-    handler=UpperHandler(),
-    filters=[KeywordsFilter(["spam", "违禁词"])],  # any hit rejects the message
-)
+client = Bitongue(config, KeywordFilter("spam", "banned word"))
 ```
 
-The other built-in filter, `SparseTextualFilter`, intercepts near-duplicates via
-qdrant sparse retrieval: given a reference corpus, messages similar to it are
-rejected while unrelated ones pass — a good fit for duplicate-content
-admission. It requires the optional `sparse` extra (see the installation
-section above) and is imported from the sparse subpackage:
+The other built-in filter, `SparseTextFilter`, does duplicate interception over qdrant sparse retrieval: given a reference corpus, events similar to the corpus are rejected and unrelated ones pass — a good fit for near-duplicate admission. It requires the optional `sparse` extra (see Installation above) and is imported from the sparse subpackage:
 
 ```python
-from bitongue.filter.sparse import SparseTextualFilter
+from bitongue.filter.sparse import SparseTextFilter
 ```
 
-The third built-in filter, `NeuroTextualFilter`, hands natural-language rules and
-the message text to a large language model for judgment — a good fit for
-semantic admission that keywords cannot enumerate (for example, "reject
-abusive content"). It requires the optional `neuro` extra (see the
-installation section above), is imported from its own subpackage, and must
-be started first — handing it to an orchestrator covers this through
-`client.start()`:
-
-```python
-from bitongue.filter.neuro import NeuroTextualFilter, NeuroFilterPolicy
-
-neuro = NeuroTextualFilter(
-    NeuroFilterPolicy(
-        base_url="https://api.example.com/v1",
-        api_key="<your-api-key>",
-        model="<model-name>",
-        rules="Reject messages containing abuse or profanity.",
-    ),
-)
-client = Bitongue(config, handler=UpperHandler(), filters=[neuro])
-```
-
-For the full semantics, configuration, and boundary behavior
-of all three (including how to think about the threshold), see the "Built-in
-filters" section of [Core concepts](concepts.md).
+For the full semantics, configuration, and edge behavior of both filters (including threshold tuning intuition), see the "Built-in filters" section in [Core concepts](concepts.md).
 
 ## Next steps
 
-- Understand each part's responsibilities → [Core concepts](concepts.md)
-- Tune buffering and timeouts → [Configuration](configuration.md)
-- See the big picture and message lifecycle → [Architecture and data flow](architecture.md)
-- Look up public objects and imports → [API reference](../api)
+- Responsibilities and boundaries of each part → [Core concepts](concepts.md)
+- Tuning buffering and timeout behavior → [Configuration](configuration.md)
+- The overall structure and the life of an event → [Architecture and data flow](architecture.md)
+- Public objects and import paths → [API reference](../api)
