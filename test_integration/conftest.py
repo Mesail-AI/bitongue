@@ -5,17 +5,15 @@ from uuid import uuid4
 
 import anyio
 import pytest
-from tests.conftest import TextualEvent
 
 from bitongue.client import Bitongue, BitongueConfig
 from bitongue.filter import Filter
 from bitongue.flow import TextEvent
 
-type MakeEvent = Callable[..., TextualEvent]
-type MakeTextEvent = Callable[..., TextEvent]
-type MakeClient = Callable[..., Bitongue[TextualEvent]]
+type MakeEvent = Callable[..., TextEvent]
+type MakeClient = Callable[..., Bitongue[TextEvent]]
 type MakeFilter = Callable[[bool], StubFilter]
-type CollectEvents = Callable[..., Awaitable[list[TextualEvent]]]
+type CollectEvents = Callable[..., Awaitable[list[TextEvent]]]
 
 
 class StubFilter:
@@ -27,18 +25,18 @@ class StubFilter:
 
     def __init__(self, verdict: bool) -> None:
         self.verdict = verdict
-        self.seen: list[TextualEvent] = []
+        self.seen: list[TextEvent] = []
 
-    async def filter(self, event: TextualEvent) -> bool:
+    async def filter(self, event: TextEvent) -> bool:
         self.seen.append(event)
         return self.verdict
 
 
 def _build_client(
-    *filters: Filter[TextualEvent],
+    *filters: Filter[TextEvent],
     buffer_size: int = 8,
     event_timeout: float | None = None,
-) -> Bitongue[TextualEvent]:
+) -> Bitongue[TextEvent]:
     """Build a client with sensible defaults; every knob is overridable."""
     config = BitongueConfig(
         buffer_size=buffer_size,
@@ -48,16 +46,16 @@ def _build_client(
 
 
 async def _collect_events(
-    client: Bitongue[TextualEvent],
+    client: Bitongue[TextEvent],
     *,
     count: int,
-) -> list[TextualEvent]:
+) -> list[TextEvent]:
     """Consume exactly ``count`` events, then stop (5 s guard).
 
     A stream that yields fewer events stalls into the guard timeout and
     fails the test through ``TimeoutError``.
     """
-    events: list[TextualEvent] = []
+    events: list[TextEvent] = []
     with anyio.fail_after(5):
         async with anyio.create_task_group() as tg:
 
@@ -75,20 +73,10 @@ async def _collect_events(
 
 @pytest.fixture
 def make_event() -> MakeEvent:
-    """Factory fixture for minimal text events."""
-
-    def _make(text: str = "hello") -> TextualEvent:
-        return TextualEvent(id=uuid4(), text=text)
-
-    return _make
-
-
-@pytest.fixture
-def make_text_event() -> MakeTextEvent:
-    """Factory fixture for bare text payloads (no identity)."""
+    """Factory fixture for text events with a fresh caller-supplied id."""
 
     def _make(text: str = "hello") -> TextEvent:
-        return TextEvent(type="text", text=text)
+        return TextEvent(id=uuid4(), content_type="text", text=text)
 
     return _make
 
