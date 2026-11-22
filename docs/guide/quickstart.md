@@ -38,7 +38,7 @@ uv add "bitongue[sparse]"
 
 围绕 Bitongue 的开发方式是「定义事件，实现过滤器，消费通过的事件」：
 
-1. 定义一个**业务事件类型**（继承 `Event`，补充自己的载荷字段）；
+1. 确定**事件类型**：文本场景直接使用内置的 `TextEvent`；其他载荷继承 `Event`，用 `content_type` 标明种类并提供同名字段；
 2. 实现若干**过滤器**（满足 `Filter` Protocol，命中即返回 `True`）；
 3. 用 `BitongueConfig` 与过滤器创建 `Bitongue` 编排器，`start` 后即可 `send` 与 `receive`；
 4. 在 `receive()` 的消费循环里完成业务处理。
@@ -51,14 +51,7 @@ from uuid import uuid4
 import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.flow import Event
-
-
-class TextEvent(Event):
-    """业务事件：身份 + 文本载荷。"""
-
-    type: str = "text"
-    text: str = ""
+from bitongue.flow import TextEvent
 
 
 class EmptyTextFilter:
@@ -84,8 +77,12 @@ async def main() -> None:
     async with anyio.create_task_group() as tg:
         tg.start_soon(consume)
         # id 由业务侧生成后透传；真实场景通常用业务系统已有的标识
-        await client.send(TextEvent(id=uuid4(), text="hello bitongue"))
-        await client.send(TextEvent(id=uuid4(), text=""))  # 会被过滤器拒绝
+        await client.send(
+            TextEvent(id=uuid4(), content_type="text", text="hello bitongue")
+        )
+        await client.send(
+            TextEvent(id=uuid4(), content_type="text", text="")  # 会被过滤器拒绝
+        )
 
     await client.close()
 
