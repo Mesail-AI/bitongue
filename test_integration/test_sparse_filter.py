@@ -119,9 +119,7 @@ class TestDuplicateInterception:
         )
         await sut.start()
         assert await sut.filter(make_event("已知违规文案示例 alpha 修改版")) is True
-        assert (
-            await sut.filter(make_event("completely unrelated new content")) is False
-        )
+        assert await sut.filter(make_event("completely unrelated new content")) is False
 
     async def test_reseed_keeps_verdicts_consistent(
         self,

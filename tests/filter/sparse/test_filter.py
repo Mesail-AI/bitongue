@@ -165,9 +165,7 @@ class TestVerdict:
         sut = make_sparse_filter(
             ["已知违规文案示例 alpha", "another known reference beta"],
         )
-        assert (
-            await sut.filter(make_event("completely unrelated gibberish")) is False
-        )
+        assert await sut.filter(make_event("completely unrelated gibberish")) is False
 
     async def test_empty_text_released_without_initialization(
         self,
