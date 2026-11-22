@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from fastembed.sparse.sparse_embedding_base import SparseEmbedding
 from pytest_mock import MockerFixture
-from tests.conftest import MakeTextEvent
+from tests.conftest import MakeEvent
 from tests.filter.sparse.conftest import MakeSparseFilter
 
 from bitongue.client import Bitongue, BitongueConfig
@@ -87,7 +87,7 @@ class TestLifecycle:
     async def test_concurrent_first_use_builds_once(
         self,
         make_sparse_filter: MakeSparseFilter,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
         mocker: MockerFixture,
     ) -> None:
         sut = make_sparse_filter(["文档一"])
@@ -97,7 +97,7 @@ class TestLifecycle:
         async with anyio.create_task_group() as tg:
 
             async def call() -> None:
-                results.append(await sut.filter(make_text_event("文档一 变体")))
+                results.append(await sut.filter(make_event("文档一 变体")))
 
             tg.start_soon(call)
             tg.start_soon(call)
@@ -108,13 +108,13 @@ class TestLifecycle:
     async def test_close_stops_and_lazy_rebuilds(
         self,
         make_sparse_filter: MakeSparseFilter,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
     ) -> None:
         sut = make_sparse_filter(["文档一"])
         await sut.start()
         await sut.close()
         assert sut.running is False
-        assert await sut.filter(make_text_event("无关消息")) is False
+        assert await sut.filter(make_event("无关消息")) is False
         assert sut.running is True  # Using the filter again rebuilds lazily.
 
     async def test_client_orchestration_starts_and_closes(
@@ -140,68 +140,67 @@ class TestVerdict:
     async def test_exact_duplicate_rejected(
         self,
         make_sparse_filter: MakeSparseFilter,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
     ) -> None:
         sut = make_sparse_filter(
             ["已知违规文案示例 alpha", "another known reference beta"],
         )
-        assert await sut.filter(make_text_event("已知违规文案示例 alpha")) is True
+        assert await sut.filter(make_event("已知违规文案示例 alpha")) is True
 
     async def test_variant_duplicate_rejected(
         self,
         make_sparse_filter: MakeSparseFilter,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
     ) -> None:
         sut = make_sparse_filter(
             ["已知违规文案示例 alpha", "another known reference beta"],
         )
-        assert await sut.filter(make_text_event("已知违规文案示例 alpha 修改版")) is True
+        assert await sut.filter(make_event("已知违规文案示例 alpha 修改版")) is True
 
     async def test_unrelated_released(
         self,
         make_sparse_filter: MakeSparseFilter,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
     ) -> None:
         sut = make_sparse_filter(
             ["已知违规文案示例 alpha", "another known reference beta"],
         )
-        assert (
-            await sut.filter(make_text_event("completely unrelated gibberish")) is False
-        )
+        assert await sut.filter(make_event("completely unrelated gibberish")) is False
 
     async def test_empty_text_released_without_initialization(
         self,
         make_sparse_filter: MakeSparseFilter,
+        make_event: MakeEvent,
     ) -> None:
         sut = make_sparse_filter(["文档一"])
-        assert await sut.filter(TextEvent(type="text", text="")) is False
+        assert await sut.filter(make_event("")) is False
         assert sut.running is False  # Empty text short-circuits before lazy init.
 
     async def test_punctuation_only_text_released(
         self,
         make_sparse_filter: MakeSparseFilter,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
     ) -> None:
         sut = make_sparse_filter(["文档一"])
         await sut.start()
-        assert await sut.filter(make_text_event("!!!")) is False  # Empty token vector.
+        assert await sut.filter(make_event("!!!")) is False  # Empty token vector.
 
     async def test_unusable_corpus_document_skipped(
         self,
         make_sparse_filter: MakeSparseFilter,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
     ) -> None:
         # Symbol-only corpus documents are skipped on seeding and do not
         # affect startup or the verdicts of the remaining documents.
         sut = make_sparse_filter(["正常违规文案", "!!!"])
         await sut.start()
         assert sut.running is True
-        assert await sut.filter(make_text_event("正常违规文案")) is True
+        assert await sut.filter(make_event("正常违规文案")) is True
 
     async def test_generator_documents_accepted(
         self,
         in_memory_policy: QdrantPolicy,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
     ) -> None:
         # Generator input is materialized at construction, so retries after
         # a failed initialization stay safe.
@@ -211,7 +210,7 @@ class TestVerdict:
             qdrant_policy=in_memory_policy,
         )
         await sut.start()
-        assert await sut.filter(make_text_event("生成器语料文档")) is True
+        assert await sut.filter(make_event("生成器语料文档")) is True
 
 
 class TestNonChineseBranch:
@@ -234,7 +233,7 @@ class TestNonChineseBranch:
     async def test_builds_with_stubbed_fastembed_bm25(
         self,
         in_memory_policy: QdrantPolicy,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         indices = np.array([101, 102], dtype=np.int64)
@@ -271,4 +270,4 @@ class TestNonChineseBranch:
         )
         # The query vector matches the corpus point exactly; a low threshold
         # must reject.
-        assert await sut.filter(make_text_event("anything")) is True
+        assert await sut.filter(make_event("anything")) is True

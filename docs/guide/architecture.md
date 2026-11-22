@@ -9,7 +9,7 @@
 ```{mermaid}
 graph BT
     base["base<br/>BaseStruct"]
-    flow["flow<br/>Flowing · Event · EventEntry"]
+    flow["flow<br/>Flowing · Event · TextEvent · EventEntry"]
     filter["filter<br/>Filter · KeywordFilter · SparseTextFilter"]
     client["client<br/>Bitongue · BitongueConfig"]
 
@@ -22,7 +22,7 @@ graph BT
 | 子包 | 职责 | 主要公开对象 |
 |-|-|-|
 | `base` | 数据结构地基 | `BaseStruct` |
-| `flow` | 内存流窗口：缓冲、计时、过期剔除 | `Flowing`、`Event`、`TextEvent`、`EventEntry` |
+| `flow` | 流窗口与事件模型：缓冲、计时、过期剔除 | `Flowing`、`Event`、`TextEvent`、`EventEntry` |
 | `filter` | 事件准入门：Protocol 与内置过滤器 | `Filter`、`FilterLifecycle`、`Normalizer`；子包 `filter.keyword`（`KeywordFilter`）、`filter.sparse`（`SparseTextFilter` 等） |
 | `client` | 生命周期编排与生产/消费两端 | `Bitongue`、`BitongueConfig` |
 
@@ -66,7 +66,7 @@ sequenceDiagram
 ## 设计取舍
 
 - **msgspec 而非 dataclass/pydantic**：事件需要高频序列化，`BaseStruct` 统一提供不可变默认、排序键 JSON 与类型转换。
-- **Protocol 而非继承**：过滤器只要求「有一个满足签名的方法」，业务类不必继承任何框架基类；事件则继承 `Event` 以获得身份与序列化能力。
+- **Protocol 而非继承**：过滤器只要求「有一个满足签名的方法」，业务类不必继承任何框架基类；事件则继承 `Event` 以获得身份、`metadata` 与序列化能力，并用 `content_type` 声明载荷种类、`content` 提供统一读取入口。
 - **业务留在消费侧**：库只负责流转（缓冲、存活、过滤），处理逻辑由消费者在 `receive()` 循环内自由实现，流转与业务互不牵制。
 - **编排器集中生命周期**：`Flowing` 可以独立使用，但 `start/close`、超时配置与过滤的编排统一收敛在 `Bitongue`，避免使用者拼装出错。
 

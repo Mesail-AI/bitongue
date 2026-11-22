@@ -37,7 +37,7 @@ uv add "bitongue[sparse]"
 
 Developing with Bitongue means "define the event, implement filters, consume what passes":
 
-1. Define a **business event type** (subclass `Event`, adding your payload fields);
+1. Choose the **event type**: use the built-in `TextEvent` for text; for other payloads subclass `Event`, name the payload with `content_type`, and provide a field of the same name;
 2. Implement **filters** (satisfying the `Filter` Protocol — return `True` on a match);
 3. Create the `Bitongue` orchestrator from a `BitongueConfig` and your filters; after `start`, `send` and `receive` become available;
 4. Handle the business logic inside the `receive()` consume loop.
@@ -50,14 +50,7 @@ from uuid import uuid4
 import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.flow import Event
-
-
-class TextEvent(Event):
-    """A business event: identity plus a text payload."""
-
-    type: str = "text"
-    text: str = ""
+from bitongue.flow import TextEvent
 
 
 class EmptyTextFilter:
@@ -84,8 +77,12 @@ async def main() -> None:
         tg.start_soon(consume)
         # The id is generated on the business side and passed through; real
         # applications typically reuse an identifier they already have.
-        await client.send(TextEvent(id=uuid4(), text="hello bitongue"))
-        await client.send(TextEvent(id=uuid4(), text=""))  # rejected by the filter
+        await client.send(
+            TextEvent(id=uuid4(), content_type="text", text="hello bitongue")
+        )
+        await client.send(
+            TextEvent(id=uuid4(), content_type="text", text="")  # rejected by the filter
+        )
 
     await client.close()
 

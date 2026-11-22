@@ -243,7 +243,7 @@ class SparseTextFilter[T: TextEvent](Filter, FilterLifecycle):
             pass.
         """
 
-        if event.type != "text" or not event.text:
+        if event.content_type != "text" or not event.text:
             return False
 
         embedding, qdrant = await self._ensure_runtime()

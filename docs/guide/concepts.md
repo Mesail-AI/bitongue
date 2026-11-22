@@ -4,7 +4,7 @@ Bitongue 把事件流转拆成四个各自独立、职责单一的概念。本�
 
 ## 事件与条目（`Event` / `TextEvent` / `EventEntry`）
 
-`Event` 是事件的基类（同时是所有数据结构共用的 `BaseStruct` msgspec 结构体的子类），只定义事件的最小信封：`id`（调用方传入的唯一标识——bitongue 不代为生成，业务侧已有的 ID 直接透传即可）。业务事件继承 `Event` 并补充自己的载荷字段，例如文本载荷可声明 `type`（载荷种类标记）与 `text` 字段。作为纯载荷形状的参照，`TextEvent` 定义了文本事件的结构（`type` 固定为 `"text"`、`text` 文本内容），内置过滤器都以它为泛型约束；它自身不带 `id`。事件继承的 `BaseStruct` 提供 `to_dict` / `from_dict` / `to_json` / `from_json` 序列化能力，因此每个事件天然可以在字典、JSON 与对象之间互转。
+`Event` 是事件的基类（同时是所有数据结构共用的 `BaseStruct` msgspec 结构体的子类），定义事件信封：`id`（调用方传入的唯一标识——bitongue 不代为生成，业务侧已有的 ID 直接透传即可）、可选的 `metadata`（自由格式字典，默认 `None`），以及 `content` 属性——按 `content_type` 声明读取同名载荷（无 `content_type` 或对应字段缺失时返回 `None`）。业务事件继承 `Event` 补充载荷字段，并用 `content_type` 标明载荷种类。文本场景可直接使用内置的 `TextEvent`：它继承 `Event`（构造参数全部为关键字参数），把 `content_type` 固定为 `"text"` 并提供 `text` 文本内容，因此同样带有 `id`、`metadata` 与序列化能力；内置过滤器都以它为泛型约束。事件继承的 `BaseStruct` 提供 `to_dict` / `from_dict` / `to_json` / `from_json` 序列化能力，因此每个事件天然可以在字典、JSON 与对象之间互转。
 
 事件被发送时并不会直接进入缓冲，而是先被包装成 `EventEntry`：除事件本体之外，还记录 `enter_time`（入库时刻）与 `timeout`（存活秒数），供流窗口做过期剔除。
 
@@ -48,8 +48,8 @@ async def filter(self, event: T) -> bool:
 - **归一化匹配**：关键词与事件文本都先经 `Normalizer` 归一化（casefold、
   非词字符折叠为空格、NFKC），大小写与标点差异不影响命中；
 - **子串语义**：关键词作为文本片段出现即算命中（Aho-Corasick 匹配子串）；
-- **边界行为**：无文本载荷的事件放行（无可匹配内容）；空关键词列表拦截不到任何
-  事件，全部放行；
+- **边界行为**：`content_type` 不是 `"text"` 或文本为空的事件放行（无可匹配内容）；
+  空关键词列表拦截不到任何事件，全部放行；
 - 词表可来自变参列表或 `load_file`（逐行读取、UTF-8、忽略空行），两条构造路径
   行为一致；自动机在构造期完成构建，`filter` 是纯查询，无首次调用开销。
 
@@ -63,7 +63,7 @@ from bitongue.filter.keyword import KeywordFilter
 查询向量检索语料，位于 `bitongue.filter.sparse` 子包：
 
 - **相似即拒**：事件与语料的相似度超过 `filter_threshold`（默认 0.8）→ 拒绝
-  （返回 `True`）；与语料无关 → 放行；无文本载荷 → 放行；
+  （返回 `True`）；与语料无关 → 放行；`content_type` 非 `"text"` 或文本为空 → 放行；
 - **相似度映射**：`similarity = scale·score / (1 + scale·score)`（`normalize_scale`
   默认 5），随 BM25 分单调递增，score 为 0（零重叠）自然映射为 0。**阈值语义偏
   敏感：默认参数下哪怕只有一个词元与语料重叠，BM25 分也可能越过 0.8 触发拦截**；

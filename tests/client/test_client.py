@@ -3,9 +3,9 @@
 import anyio
 import pytest
 from tests.client.conftest import CollectEvents, MakeClient, MakeFilter
-from tests.conftest import MakeEvent, TextualEvent, WaitUntil
+from tests.conftest import MakeEvent, WaitUntil
 
-from bitongue.flow import Event
+from bitongue.flow import TextEvent
 
 
 class TestFilterChain:
@@ -111,9 +111,9 @@ class TestFilterChain:
 
             def __init__(self, error: Exception) -> None:
                 self._error = error
-                self.seen: list[TextualEvent] = []
+                self.seen: list[TextEvent] = []
 
-            async def filter(self, event: TextualEvent) -> bool:
+            async def filter(self, event: TextEvent) -> bool:
                 self.seen.append(event)
                 raise self._error
 
@@ -125,7 +125,7 @@ class TestFilterChain:
         await client.send(make_event("m1"))
         await client.send(make_event("m2"))
 
-        consumed: list[Event] = []
+        consumed: list[TextEvent] = []
         with pytest.raises(ExceptionGroup) as excinfo:
             async for item in client.receive():
                 consumed.append(item)  # noqa: PERF401 -- 流应在此处终止
@@ -155,9 +155,9 @@ class TestConcurrentFilters:
             """Filter that waits until its companion has started."""
 
             def __init__(self) -> None:
-                self.seen: list[TextualEvent] = []
+                self.seen: list[TextEvent] = []
 
-            async def filter(self, event: TextualEvent) -> bool:
+            async def filter(self, event: TextEvent) -> bool:
                 self.seen.append(event)
                 with anyio.fail_after(2):
                     await release_first.wait()
@@ -168,9 +168,9 @@ class TestConcurrentFilters:
             """Companion filter that unblocks the waiting one."""
 
             def __init__(self) -> None:
-                self.seen: list[TextualEvent] = []
+                self.seen: list[TextEvent] = []
 
-            async def filter(self, event: TextualEvent) -> bool:
+            async def filter(self, event: TextEvent) -> bool:
                 self.seen.append(event)
                 release_first.set()
 
@@ -325,13 +325,13 @@ class TestCloseLifecycle:
             async def close(self) -> None:
                 calls.append(f"close:{self._tag}")
 
-            async def filter(self, event: TextualEvent) -> bool:
+            async def filter(self, event: TextEvent) -> bool:
                 return False
 
         class PlainFilter:
             """Filter double without any lifecycle methods."""
 
-            async def filter(self, event: TextualEvent) -> bool:
+            async def filter(self, event: TextEvent) -> bool:
                 return False
 
         first = LifecycleFilter("a")

@@ -2,22 +2,22 @@
 
 import anyio
 import pytest
-from tests.conftest import MakeEvent, TextualEvent, WaitUntil
+from tests.conftest import MakeEvent, WaitUntil
 
-from bitongue.flow import Flowing
+from bitongue.flow import Flowing, TextEvent
 
 
 class TestFlowingLifecycle:
     """start / close / running and the uninitialized guards."""
 
     async def test_send_before_start_raises(self, make_event: MakeEvent) -> None:
-        flow = Flowing[TextualEvent](buffer_size=1)
+        flow = Flowing[TextEvent](buffer_size=1)
 
         with pytest.raises(RuntimeError, match="Flowing is not running"):
             await flow.send(make_event())
 
     async def test_receive_before_start_raises_on_first_anext(self) -> None:
-        flow = Flowing[TextualEvent](buffer_size=1)
+        flow = Flowing[TextEvent](buffer_size=1)
         gen = flow.receive()
 
         with pytest.raises(RuntimeError, match="Flowing is not running"):
@@ -26,7 +26,7 @@ class TestFlowingLifecycle:
     async def test_start_sets_running_and_allows_send(
         self, make_event: MakeEvent
     ) -> None:
-        flow = Flowing[TextualEvent](buffer_size=1)
+        flow = Flowing[TextEvent](buffer_size=1)
 
         await flow.start()
         assert flow.running
@@ -35,7 +35,7 @@ class TestFlowingLifecycle:
         await flow.close()
 
     async def test_close_clears_running(self, make_event: MakeEvent) -> None:
-        flow = Flowing[TextualEvent](buffer_size=1)
+        flow = Flowing[TextEvent](buffer_size=1)
         await flow.start()
 
         await flow.close()
@@ -44,7 +44,7 @@ class TestFlowingLifecycle:
             await flow.send(make_event())
 
     async def test_start_is_idempotent(self, make_event: MakeEvent) -> None:
-        flow = Flowing[TextualEvent](buffer_size=1)
+        flow = Flowing[TextEvent](buffer_size=1)
 
         await flow.start()
         await flow.start()
@@ -53,7 +53,7 @@ class TestFlowingLifecycle:
         await flow.close()
 
     async def test_close_is_idempotent(self, make_event: MakeEvent) -> None:
-        flow = Flowing[TextualEvent](buffer_size=1)
+        flow = Flowing[TextEvent](buffer_size=1)
         await flow.start()
         await flow.send(make_event())
 
@@ -67,12 +67,12 @@ class TestFlowingExpiry:
     async def test_none_timeout_delivers_event(
         self, make_event: MakeEvent, wait_until: WaitUntil
     ) -> None:
-        flow = Flowing[TextualEvent](buffer_size=4, timeout=None)
+        flow = Flowing[TextEvent](buffer_size=4, timeout=None)
         await flow.start()
         event = make_event("m")
         await flow.send(event)
 
-        got: list[TextualEvent] = []
+        got: list[TextEvent] = []
         async with anyio.create_task_group() as tg:
 
             async def drain() -> None:
@@ -102,7 +102,7 @@ class TestFlowingExpiry:
     ) -> None:
         clock = {"now": 1000.0}
         monkeypatch.setattr("bitongue.flow.flowing.time.time", lambda: clock["now"])
-        flow = Flowing[TextualEvent](buffer_size=4, timeout=10)
+        flow = Flowing[TextEvent](buffer_size=4, timeout=10)
         await flow.start()
         first = make_event("first")
         await flow.send(first)
@@ -111,7 +111,7 @@ class TestFlowingExpiry:
         await flow.send(second)
 
         expected_count = 2 if delivered else 1
-        got: list[TextualEvent] = []
+        got: list[TextEvent] = []
         async with anyio.create_task_group() as tg:
 
             async def drain() -> None:
@@ -136,13 +136,13 @@ class TestFlowingBackpressure:
     async def test_send_blocks_when_buffer_full_then_resumes(
         self, make_event: MakeEvent, wait_until: WaitUntil
     ) -> None:
-        flow = Flowing[TextualEvent](buffer_size=1)
+        flow = Flowing[TextEvent](buffer_size=1)
         await flow.start()
         first = make_event("first")
         second = make_event("second")
         await flow.send(first)
 
-        got: list[TextualEvent] = []
+        got: list[TextEvent] = []
         async with anyio.create_task_group() as tg:
 
             async def blocked_send() -> None:

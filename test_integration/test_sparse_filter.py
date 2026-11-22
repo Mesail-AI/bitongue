@@ -13,12 +13,11 @@ from uuid import uuid4
 import anyio
 import pytest
 from qdrant_client import AsyncQdrantClient
-from tests.conftest import MakeTextEvent, TextualEvent
 
 from bitongue.client import Bitongue, BitongueConfig
 from bitongue.filter.sparse import QdrantPolicy, SparseTextFilter
 from bitongue.flow import TextEvent
-from test_integration.conftest import CollectEvents
+from test_integration.conftest import CollectEvents, MakeEvent
 
 pytestmark = pytest.mark.integration
 
@@ -113,21 +112,19 @@ class TestDuplicateInterception:
     async def test_variant_rejected_and_unrelated_released(
         self,
         make_integration_filter: MakeIntegrationFilter,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
     ) -> None:
         sut = make_integration_filter(
             ["已知违规文案示例 alpha", "another known reference beta"],
         )
         await sut.start()
-        assert await sut.filter(make_text_event("已知违规文案示例 alpha 修改版")) is True
-        assert (
-            await sut.filter(make_text_event("completely unrelated new content")) is False
-        )
+        assert await sut.filter(make_event("已知违规文案示例 alpha 修改版")) is True
+        assert await sut.filter(make_event("completely unrelated new content")) is False
 
     async def test_reseed_keeps_verdicts_consistent(
         self,
         make_integration_filter: MakeIntegrationFilter,
-        make_text_event: MakeTextEvent,
+        make_event: MakeEvent,
     ) -> None:
         # Re-seeding the same collection name: uuid5 dedup upsert, and the
         # verdicts stay consistent across instances.
@@ -138,8 +135,8 @@ class TestDuplicateInterception:
 
         second = make_integration_filter(["持久化判重语料"], collection_name=name)
         await second.start()
-        assert await second.filter(make_text_event("持久化判重语料 变体")) is True
-        assert await second.filter(make_text_event("无关新内容")) is False
+        assert await second.filter(make_event("持久化判重语料 变体")) is True
+        assert await second.filter(make_event("无关新内容")) is False
 
 
 class TestClientAssembly:
@@ -163,8 +160,16 @@ class TestClientAssembly:
         # The rejected variant must share tokens with the corpus; the
         # released message must share zero tokens with it: even a single
         # overlapping token can score above the default threshold.
-        rejected = TextualEvent(id=uuid4(), text="端到端违规文案 变体")
-        released = TextualEvent(id=uuid4(), text="totally different subject")
+        rejected = TextEvent(
+            id=uuid4(),
+            content_type="text",
+            text="端到端违规文案 变体",
+        )
+        released = TextEvent(
+            id=uuid4(),
+            content_type="text",
+            text="totally different subject",
+        )
         await client.send(rejected)
         await client.send(released)
 

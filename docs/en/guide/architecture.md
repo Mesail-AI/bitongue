@@ -9,7 +9,7 @@ The library splits into four subpackages with bottom-up dependencies: `base` dep
 ```{mermaid}
 graph BT
     base["base<br/>BaseStruct"]
-    flow["flow<br/>Flowing · Event · EventEntry"]
+    flow["flow<br/>Flowing · Event · TextEvent · EventEntry"]
     filter["filter<br/>Filter · KeywordFilter · SparseTextFilter"]
     client["client<br/>Bitongue · BitongueConfig"]
 
@@ -22,7 +22,7 @@ graph BT
 | Subpackage | Responsibility | Main public objects |
 |-|-|-|
 | `base` | Data-structure foundation | `BaseStruct` |
-| `flow` | In-memory flowing window: buffering, timing, expiry removal | `Flowing`, `Event`, `TextEvent`, `EventEntry` |
+| `flow` | Flowing window and event models: buffering, timing, expiry removal | `Flowing`, `Event`, `TextEvent`, `EventEntry` |
 | `filter` | Event admission: Protocols and built-in filters | `Filter`, `FilterLifecycle`, `Normalizer`; subpackages `filter.keyword` (`KeywordFilter`), `filter.sparse` (`SparseTextFilter` etc.) |
 | `client` | Lifecycle orchestration and both ends of the pipeline | `Bitongue`, `BitongueConfig` |
 
@@ -66,7 +66,7 @@ A few key points tied to the code:
 ## Design trade-offs
 
 - **msgspec over dataclass/pydantic**: events serialize at high frequency, and `BaseStruct` uniformly provides immutable defaults, sorted-key JSON, and type conversion.
-- **Protocols over inheritance**: a filter only needs "one method with the right signature"; business classes inherit nothing from the framework. Events do subclass `Event` to gain identity and serialization.
+- **Protocols over inheritance**: a filter only needs "one method with the right signature"; business classes inherit nothing from the framework. Events do subclass `Event` to gain identity, `metadata`, and serialization, while `content_type` declares the payload kind and `content` provides a uniform read entry point.
 - **Business logic stays on the consumer side**: the library owns flow only (buffering, lifetime, filtering); the handling logic lives freely in the consumer's `receive()` loop, so neither constrains the other.
 - **Centralized lifecycle in the orchestrator**: `Flowing` works standalone, but `start/close`, timeout configuration, and filter orchestration converge in `Bitongue` so users cannot assemble them wrong.
 

@@ -4,7 +4,7 @@ Bitongue splits event flow into four independent, single-responsibility concepts
 
 ## Events and entries (`Event` / `TextEvent` / `EventEntry`)
 
-`Event` is the base class of events (itself a subclass of the `BaseStruct` msgspec struct shared by all data structures), and defines only the minimal envelope: `id` (a unique identifier supplied by the caller — bitongue never generates ids; whatever identifier the business side already has is passed through). Business events subclass `Event` and add their own payload fields; a text payload, for instance, declares `type` (a payload-kind marker) and `text`. As the reference payload shape, `TextEvent` defines what a text event looks like (`type` fixed to `"text"`, `text` carrying the content); the built-in filters are generic over it. It carries no `id` of its own. The `BaseStruct` base provides `to_dict` / `from_dict` / `to_json` / `from_json` serialization, so every event converts naturally between dicts, JSON, and objects.
+`Event` is the base class of events (itself a subclass of the `BaseStruct` msgspec struct shared by all data structures), and defines the event envelope: `id` (a unique identifier supplied by the caller — bitongue never generates ids; whatever identifier the business side already has is passed through), optional `metadata` (a free-form dict defaulting to `None`), and a `content` property that reads the payload named by `content_type` (returning `None` when `content_type` is absent or names a missing field). Business events subclass `Event`, add their own payload fields, and mark the payload kind with `content_type`. For text, use the built-in `TextEvent` directly: it subclasses `Event` (all construction arguments are keyword-only), fixes `content_type` to `"text"`, and carries the text in `text` — so it also has `id`, `metadata`, and serialization; the built-in filters are generic over it. The `BaseStruct` base provides `to_dict` / `from_dict` / `to_json` / `from_json` serialization, so every event converts naturally between dicts, JSON, and objects.
 
 When an event is sent it does not enter the buffer directly; it is first wrapped into an `EventEntry`: alongside the event itself it records `enter_time` (when it entered the flow) and `timeout` (its lifetime in seconds), which the flowing window uses for expiry removal.
 
@@ -49,8 +49,8 @@ Multi-keyword matching over an Aho-Corasick automaton, in the `bitongue.filter.k
 - **Normalized matching**: keywords and event text alike go through `Normalizer` first (casefold,
   non-word runs folded to spaces, NFKC), so case and punctuation differences cannot hide a match;
 - **Substring semantics**: a keyword firing as a fragment of the text counts (Aho-Corasick matches substrings);
-- **Edge behavior**: events without a text payload pass (nothing to match); an empty keyword list
-  intercepts nothing and passes everything;
+- **Edge behavior**: events whose `content_type` is not `"text"`, or whose text is empty, pass
+  (nothing to match); an empty keyword list intercepts nothing and passes everything;
 - The keyword set comes from varargs or `load_file` (read line by line, UTF-8, blank lines skipped); both construction paths behave identically. The automaton is built at construction time, so `filter` is a pure query with no first-call cost.
 
 ```python
@@ -61,7 +61,7 @@ from bitongue.filter.keyword import KeywordFilter
 
 The reference corpus is embedded into a qdrant sparse collection (BM25 term-frequency weights + IDF correction), and each event queries it as a binary vector; the filter lives in the `bitongue.filter.sparse` subpackage:
 
-- **Similarity rejects**: when an event's similarity to the corpus exceeds `filter_threshold` (default 0.8) → reject (return `True`); unrelated events pass; no text payload → pass;
+- **Similarity rejects**: when an event's similarity to the corpus exceeds `filter_threshold` (default 0.8) → reject (return `True`); unrelated events pass; `content_type` other than `"text"` or empty text → pass;
 - **Similarity mapping**: `similarity = scale·score / (1 + scale·score)` (`normalize_scale` defaults to 5), monotonically increasing with the BM25 score, with a zero score (no overlap) mapping naturally to 0. **The threshold leans sensitive: with the defaults, a single overlapping token can push the BM25 score past 0.8 and trigger interception.** For looser admission raise `filter_threshold` (e.g. 0.9+) or lower `normalize_scale` (e.g. 2.0);
 - **Deduplicated seeding**: each corpus string is addressed by a UUID5 derived from its own text, so re-seeding overwrites old points instead of accumulating copies; corpus documents that normalize to no usable token are skipped; the corpus is materialized at construction, so passing a generator is safe;
 - **Lifecycle**: initialization includes model building and a full corpus upsert, which is expensive, so the filter implements `FilterLifecycle` (`start()` / `close()`): driven by the `Bitongue` orchestrator, `client.start()` initializes it and `close()` releases the connection; standalone, the first `filter` call triggers lazy initialization (lock-protected, a one-off cost charged to the caller's timeout budget);

@@ -4,14 +4,14 @@ from collections.abc import Awaitable, Callable
 
 import anyio
 import pytest
-from tests.conftest import TextualEvent
 
 from bitongue.client import Bitongue, BitongueConfig
 from bitongue.filter import Filter
+from bitongue.flow import TextEvent
 
-type MakeClient = Callable[..., Bitongue[TextualEvent]]
+type MakeClient = Callable[..., Bitongue[TextEvent]]
 type MakeFilter = Callable[[bool], StubFilter]
-type CollectEvents = Callable[..., Awaitable[list[TextualEvent]]]
+type CollectEvents = Callable[..., Awaitable[list[TextEvent]]]
 
 
 class StubFilter:
@@ -23,18 +23,18 @@ class StubFilter:
 
     def __init__(self, verdict: bool) -> None:
         self.verdict = verdict
-        self.seen: list[TextualEvent] = []
+        self.seen: list[TextEvent] = []
 
-    async def filter(self, event: TextualEvent) -> bool:
+    async def filter(self, event: TextEvent) -> bool:
         self.seen.append(event)
         return self.verdict
 
 
 def _build_client(
-    *filters: Filter[TextualEvent],
+    *filters: Filter[TextEvent],
     buffer_size: int = 8,
     event_timeout: float | None = None,
-) -> Bitongue[TextualEvent]:
+) -> Bitongue[TextEvent]:
     """Build a client with sensible defaults; every knob is overridable."""
     config = BitongueConfig(
         buffer_size=buffer_size,
@@ -44,16 +44,16 @@ def _build_client(
 
 
 async def _collect_events(
-    client: Bitongue[TextualEvent],
+    client: Bitongue[TextEvent],
     *,
     count: int,
-) -> list[TextualEvent]:
+) -> list[TextEvent]:
     """Consume exactly ``count`` events, then stop (5 s guard).
 
     A stream that yields fewer events stalls into the guard timeout and
     fails the test through ``TimeoutError``.
     """
-    events: list[TextualEvent] = []
+    events: list[TextEvent] = []
     with anyio.fail_after(5):
         async with anyio.create_task_group() as tg:
 

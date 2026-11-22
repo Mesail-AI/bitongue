@@ -77,7 +77,7 @@ class KeywordFilter[T: TextEvent](Filter):
             ``True`` when a keyword matched, ``False`` to pass.
         """
 
-        if event.type != "text" or not event.text or not self._keywords:
+        if event.content_type != "text" or not event.text or not self._keywords:
             return False
 
         return any(

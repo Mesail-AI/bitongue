@@ -1,6 +1,6 @@
 """Event models flowing through the stream."""
 
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from bitongue.base import BaseStruct
@@ -15,23 +15,36 @@ __all__ = (
 class Event(BaseStruct):
     """Minimal event envelope.
 
-    Carries only the identity: callers generate the ``id`` and the
-    library transparently passes it through — results derived from an
-    event mirror its id back to the business side.
+    Carries the caller-supplied ``id``, optional free-form ``metadata``,
+    and a ``content`` view resolving the payload named by
+    ``content_type``. The library transparently passes events through —
+    results derived from an event mirror its id back to the business
+    side.
     """
 
     id: UUID
 
+    metadata: dict[str, Any] | None = None
 
-class TextEvent(BaseStruct):
+    @property
+    def content(self) -> Any:
+        """Payload named by ``content_type``, or ``None`` when absent."""
+
+        if (content_type := getattr(self, "content_type", None)) is None:
+            return None
+
+        return getattr(self, content_type, None)
+
+
+class TextEvent(Event, kw_only=True):
     """Textual payload shape shared by text-oriented filters.
 
-    Unlike :class:`Event` it carries no identity — it defines the
-    ``type`` discriminator (fixed to ``"text"``) and the text body that
-    text-oriented filters match against.
+    Adds the ``content_type`` discriminator (fixed to ``"text"``) and the
+    text body that text-oriented filters match against. Construction is
+    keyword-only, inherited envelope fields included.
     """
 
-    type: Literal["text"]
+    content_type: Literal["text"]
     text: str
 
 
