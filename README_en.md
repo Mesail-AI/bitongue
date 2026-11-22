@@ -68,14 +68,7 @@ from uuid import uuid4
 import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.flow import Event
-
-
-class TextEvent(Event):
-    """A business event: identity plus a text payload."""
-
-    type: str = "text"
-    text: str = ""
+from bitongue.flow import TextEvent
 
 
 class EmptyTextFilter:
@@ -102,8 +95,12 @@ async def main() -> None:
         tg.start_soon(consume)
         # The id is generated on the business side and passed through; real
         # applications typically reuse an identifier they already have.
-        await client.send(TextEvent(id=uuid4(), text="hello bitongue"))
-        await client.send(TextEvent(id=uuid4(), text=""))  # rejected by the filter
+        await client.send(
+            TextEvent(id=uuid4(), content_type="text", text="hello bitongue")
+        )
+        await client.send(
+            TextEvent(id=uuid4(), content_type="text", text="")  # rejected by the filter
+        )
 
     await client.close()
 
