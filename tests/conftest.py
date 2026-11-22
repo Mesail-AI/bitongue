@@ -4,47 +4,23 @@ Subtree-specific fixtures live in their subtree's ``conftest.py``.
 """
 
 from collections.abc import Awaitable, Callable
-from typing import Literal
 from uuid import uuid4
 
 import anyio
 import pytest
 
-from bitongue.flow import Event, TextEvent
+from bitongue.flow import TextEvent
 
-type MakeEvent = Callable[..., "TextualEvent"]
-type MakeTextEvent = Callable[..., TextEvent]
+type MakeEvent = Callable[..., TextEvent]
 type WaitUntil = Callable[[Callable[[], bool]], Awaitable[None]]
-
-
-class TextualEvent(Event):
-    """Concrete business event: identity plus a text payload.
-
-    Tests flow this through ``Flowing``/``Bitongue``/``Filter`` the way
-    a real consumer would: a concrete ``Event`` subclass carrying the
-    textual fields text-oriented filters match against.
-    """
-
-    type: Literal["text"] = "text"
-    text: str = "hello"
 
 
 @pytest.fixture
 def make_event() -> MakeEvent:
-    """Factory fixture for minimal text events."""
-
-    def _make(text: str = "hello") -> TextualEvent:
-        return TextualEvent(id=uuid4(), text=text)
-
-    return _make
-
-
-@pytest.fixture
-def make_text_event() -> MakeTextEvent:
-    """Factory fixture for bare text payloads (no identity)."""
+    """Factory fixture for text events with a fresh caller-supplied id."""
 
     def _make(text: str = "hello") -> TextEvent:
-        return TextEvent(type="text", text=text)
+        return TextEvent(id=uuid4(), content_type="text", text=text)
 
     return _make
 
